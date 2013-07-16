@@ -14,20 +14,19 @@ class CaCaSync(object):
         parser = SafeConfigParser()
         parser.read(self.CONF_FILE)
 
-        self.app_key = parser.get('dropbox', 'APP_KEY')
-        self.app_secret = parser.get('dropbox', 'APP_SECRET')
-        self.current_path = ''
-
-        self.api_client = None
+        self.dropbox_key = parser.get('dropbox', 'APP_KEY')
+        self.dropbox_secret = parser.get('dropbox', 'APP_SECRET')
+        self.dropbox_current_path = ''
+        self.dropbox_api_client = None
         try:
             token = parser.get('dropbox', 'APP_TOKEN')
-            self.api_client = client.DropboxClient(token)
+            self.dropbox_api_client = client.DropboxClient(token)
             print "[loaded access token]"
         except IOError:
             pass  # don't worry if it's not there
 
     def ls(self):
-        resp = self.api_client.metadata('')
+        resp = self.dropbox_api_client.metadata('')
 
         if 'contents' in resp:
             for f in resp['contents']:
@@ -44,8 +43,8 @@ class CaCaSync(object):
         """
         to_file = open(os.path.expanduser(to_path), "wb")
 
-        f, metadata = self.api_client.get_file_and_metadata(
-            self.current_path + "/" + from_path
+        f, metadata = self.dropbox_api_client.get_file_and_metadata(
+            self.dropbox_current_path + "/" + from_path
         )
         print 'Metadata:', metadata
         to_file.write(f.read())
