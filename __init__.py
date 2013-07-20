@@ -7,39 +7,48 @@ import locale
 import tempfile
 from ConfigParser import SafeConfigParser
 from dropbox import client
+import flickr_api
+from oauth import oauth
 
 CONF_FILE = 'cacasync.conf'
+TMP_DIR = tempfile.gettempdir() + os.sep + 'cacasync'
 
 
 class CaCaSync(object):
-    def __init__():
-        pass
+
+    def __init__(self, dropbox, flickr=None, gplus=None):
+        self.dropbox = dropbox
+        self.flickr = flickr
+        self.gplus = gplus
+
+    def dropbox_sync_flickr(self, dropbox_folder=''):
+        file_list = self.dropbox.download_folder(dropbox_folder)
+        print(file_list)
 
 
 class Dropbox(object):
 
     def __init__(
-        self, dropbox_key, dropbox_secret, dropbox_token, dropbox_current_path
+        self, api_key, api_secret, app_token, current_path
     ):
-        self.dropbox_key = dropbox_key
-        self.dropbox_secret = dropbox_secret
-        self.dropbox_token = dropbox_token
-        self.dropbox_current_path = dropbox_current_path
+        self.api_token = api_key
+        self.api_secret = api_secret
+        self.app_token = app_token
+        self.current_path = current_path
 
-        self.dropbox_api_client = client.DropboxClient(dropbox_token)
-        tmp_dir = tempfile.gettempdir() + os.sep + 'cacasync'
-        if os.path.exists(tmp_dir):
-            if not os.path.isdir(tmp_dir):
+        self.api_client = client.DropboxClient(app_token)
+        self._make_tmp_dir()
+
+    def _make_tmp_dir(self):
+        if os.path.exists(TMP_DIR):
+            if not os.path.isdir(TMP_DIR):
                 sys.exit(1)
         else:
-            os.mkdir(tmp_dir)
-        print(tmp_dir)
-        self.tmp_dir = tmp_dir
-        print "[loaded access token]"
+            os.mkdir(TMP_DIR)
 
     def ls(self, path):
-        resp = self.dropbox_api_client.metadata(
-            self.dropbox_current_path + os.sep + path
+        resp = self.api_client.metadata(
+            self.current_path + os.sep + path
         )
         file_list = []
         if 'contents' in resp:
@@ -49,7 +58,7 @@ class Dropbox(object):
                 file_list.append(('%s' % name).encode(encoding))
         return file_list
 
-    def get(self, from_path, to_path):
+    def download_file(self, from_path, to_path):
         """
         Copy file from Dropbox to local file and print out the metadata.
 
@@ -58,37 +67,72 @@ class Dropbox(object):
         """
         to_file = open(os.path.expanduser(to_path), 'wb')
 
-        f, metadata = self.dropbox_api_client.get_file_and_metadata(
-            self.dropbox_current_path + os.sep + from_path
+        f, metadata = self.api_client.get_file_and_metadata(
+            self.current_path + os.sep + from_path
         )
         # print 'Metadata:', metadata
         to_file.write(f.read())
 
-    def get_folder(self, from_path):
+    def download_folder(self, from_path):
         file_list = self.ls(from_path)
-        to_path = self.tmp_dir + os.sep + from_path
+        to_path = TMP_DIR + os.sep + from_path
         os.makedirs(to_path)
         for f in file_list:
             self.get(from_path + os.sep + f, to_path + os.sep + f)
+        return file_list
+
+
+class Flickr(object):
+
+    def __init__(self, api_key, api_secret, app_token, app_secret):
+        self.api_key = api_key
+        self.api_secret = api_secret
+        self.app_token = app_token
+        self.app_secret = app_secret
+
+        flickr_api.set_keys(api_key, api_secret)
+        self.api_client = flickr_api.auth.AuthHandler(callback=None)
+        self.api_client.access_token = oauth.OAuthToken(
+            app_token,
+            app_secret
+        )
+        flickr_api.set_auth_handler(self.api_client)
+        self.user = flickr_api.test.login()
 
 
 def main():
     parser = SafeConfigParser()
     parser.read(CONF_FILE)
 
-    dropbox_key = parser.get('dropbox', 'APP_KEY')
-    dropbox_secret = parser.get('dropbox', 'APP_SECRET')
+    dropbox_api_key = parser.get('dropbox', 'APP_KEY')
+    dropbox_api_secret = parser.get('dropbox', 'APP_SECRET')
 
-    dropbox_token = parser.get('dropbox', 'APP_TOKEN')
+    dropbox_app_token = parser.get('dropbox', 'APP_TOKEN')
     dropbox_current_path = parser.get('dropbox', 'CURRENT_PATH')
 
     dropbox = Dropbox(
-        dropbox_key,
-        dropbox_secret,
-        dropbox_token,
+        dropbox_api_key,
+        dropbox_api_secret,
+        dropbox_app_token,
         dropbox_current_path
     )
-    dropbox.get_folder('test')
+
+    flickr_api_key = parser.get('flickr', 'API_KEY')
+    flickr_api_secret = parser.get('flickr', 'API_SECRET')
+
+    flickr_app_token = parser.get('flickr', 'APP_TOKEN')
+    flickr_app_secret = parser.get('flickr', 'APP_SECRET')
+
+    flickr = Flickr(
+        flickr_api_key,
+        flickr_api_secret,
+        flickr_app_token,
+        flickr_app_secret
+    )
+
+    cacasync = CaCaSync(dropbox, flickr)
+    cacasync.dropbox_sync_flickr('test')
+
 
 if __name__ == '__main__':
     main()
