@@ -5,13 +5,16 @@ import os
 import sys
 import locale
 import tempfile
+import logging
 from ConfigParser import SafeConfigParser
 from dropbox import client
 import flickr_api
 from oauth import oauth
 
+logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 CONF_FILE = 'cacasync.conf'
-TMP_DIR = tempfile.gettempdir() + os.sep + 'cacasync'
 
 
 class CaCaSync(object):
@@ -37,14 +40,20 @@ class Dropbox(object):
         self.current_path = current_path
 
         self.api_client = client.DropboxClient(app_token)
-        self._make_tmp_dir()
 
-    def _make_tmp_dir(self):
-        if os.path.exists(TMP_DIR):
-            if not os.path.isdir(TMP_DIR):
+        tmp_dir = tempfile.gettempdir() + os.sep + 'cacasync'
+        self._make_tmp_dir(tmp_dir)
+        tmp_dir = tmp_dir + os.sep + app_token
+        self._make_tmp_dir(tmp_dir)
+        self.tmp_dir = tmp_dir
+
+    def _make_tmp_dir(self, tmp_dir):
+        if os.path.exists(tmp_dir):
+            if not os.path.isdir(tmp_dir):
+                logger.error('{path} is not a directory'.format(path=tmp_dir))
                 sys.exit(1)
         else:
-            os.mkdir(TMP_DIR)
+            os.mkdir(tmp_dir)
 
     def ls(self, path):
         resp = self.api_client.metadata(
@@ -75,7 +84,7 @@ class Dropbox(object):
 
     def download_folder(self, from_path):
         file_list = self.ls(from_path)
-        to_path = TMP_DIR + os.sep + from_path
+        to_path = self.tmp_dir + os.sep + from_path
         os.makedirs(to_path)
         for f in file_list:
             self.get(from_path + os.sep + f, to_path + os.sep + f)
