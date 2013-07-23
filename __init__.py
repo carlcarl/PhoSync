@@ -10,6 +10,7 @@ from ConfigParser import SafeConfigParser
 from dropbox import client
 import flickr_api
 from oauth import oauth
+import uniout
 
 logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -87,7 +88,7 @@ class Dropbox(object):
         to_path = self.tmp_dir + os.sep + from_path
         os.makedirs(to_path)
         for f in file_list:
-            self.get(from_path + os.sep + f, to_path + os.sep + f)
+            self.download_file(from_path + os.sep + f, to_path + os.sep + f)
         return file_list
 
 
@@ -140,7 +141,7 @@ def main():
     )
 
     cacasync = CaCaSync(dropbox, flickr)
-    cacasync.dropbox_sync_flickr('test')
+    # cacasync.dropbox_sync_flickr('test')
 
 
 if __name__ == '__main__':
