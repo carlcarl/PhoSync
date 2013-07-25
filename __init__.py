@@ -10,12 +10,16 @@ from ConfigParser import SafeConfigParser
 from dropbox import client
 # import flickr_api
 # from oauth import oauth
-# import uniout
+import uniout
 import requests
 import md5
 import json
 
-logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
+logging.basicConfig(
+    stream=sys.stdout,
+    format='%(levelname)s: %(message)s',
+    level=logging.DEBUG
+)
 logger = logging.getLogger(__name__)
 
 CONF_FILE = 'cacasync.conf'
@@ -34,10 +38,12 @@ class CaCaSync(object):
 
     def dropbox_diff_flickr(self):
         diff_set = set()
-        folder_queue = []
+        # folder_queue = []
         dropbox_file_set = self.dropbox.ls()
-        flickr_file_set, flickr_index_dict = self.flickr.ls()
-        # diff_list =
+        flickr_file_set, flickr_index_dict = self.flickr.get_photosets_info()
+        logger.debug(flickr_file_set)
+        diff_set = dropbox_file_set.difference(flickr_file_set)
+        logger.debug(diff_set)
 
 
 class Dropbox(object):
@@ -74,9 +80,9 @@ class Dropbox(object):
         if 'contents' in resp:
             for f in resp['contents']:
                 path_tokens = f['path'].split(os.sep)
-                name = os.sep.join(path_tokens[1:])
+                name = os.sep.join(path_tokens[-1:])
                 encoding = locale.getdefaultlocale()[1]
-                file_set.add(('%s'.format(name)).encode(encoding))
+                file_set.add(('{0}'.format(name.encode(encoding))))
         return file_set
 
     def download_file(self, from_path, to_path):
@@ -164,7 +170,7 @@ class Flickr(object):
         self.photosets_index_dict = index_dict
         return titles, index_dict
 
-    def get_photos(self, photoset_name):
+    def get_photos_info(self, photoset_name):
         photoset_id = self.photosets_index_dict[photoset_name]
         args = self._get_request_args(
             'flickr.photosets.getPhotos',
@@ -188,18 +194,18 @@ def main():
     parser = SafeConfigParser()
     parser.read(CONF_FILE)
 
-    # dropbox_api_key = parser.get('dropbox', 'APP_KEY')
-    # dropbox_api_secret = parser.get('dropbox', 'APP_SECRET')
+    dropbox_api_key = parser.get('dropbox', 'APP_KEY')
+    dropbox_api_secret = parser.get('dropbox', 'APP_SECRET')
 
-    # dropbox_app_token = parser.get('dropbox', 'APP_TOKEN')
-    # dropbox_current_path = parser.get('dropbox', 'CURRENT_PATH')
+    dropbox_app_token = parser.get('dropbox', 'APP_TOKEN')
+    dropbox_current_path = parser.get('dropbox', 'CURRENT_PATH')
 
-    # dropbox = Dropbox(
-    #     dropbox_api_key,
-    #     dropbox_api_secret,
-    #     dropbox_app_token,
-    #     dropbox_current_path
-    # )
+    dropbox = Dropbox(
+        dropbox_api_key,
+        dropbox_api_secret,
+        dropbox_app_token,
+        dropbox_current_path
+    )
 
     flickr_api_key = parser.get('flickr', 'API_KEY')
     flickr_api_secret = parser.get('flickr', 'API_SECRET')
@@ -213,10 +219,11 @@ def main():
         flickr_app_token,
         flickr_app_secret
     )
-    flickr.get_photosets_info()
-    flickr.get_photos('box')
+    # flickr.get_photosets_info()
+    # flickr.get_photos('box')
 
-    # cacasync = CaCaSync(dropbox, flickr)
+    cacasync = CaCaSync(dropbox, flickr)
+    cacasync.dropbox_diff_flickr()
     # cacasync.dropbox_sync_flickr('test')
 
 
