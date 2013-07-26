@@ -11,17 +11,17 @@ from dropbox import client
 # import flickr_api
 # from oauth import oauth
 import uniout
+assert uniout
 import requests
 import md5
 import json
 
-logging.basicConfig(
-    stream=sys.stdout,
-    format='%(levelname)s: %(message)s',
-    level=logging.DEBUG
-)
+# logging.basicConfig(
+#     stream=sys.stdout,
+#     format='%(levelname)s: %(message)s',
+#     level=logging.DEBUG
+# )
 logger = logging.getLogger(__name__)
-
 CONF_FILE = 'cacasync.conf'
 
 
@@ -37,13 +37,15 @@ class CaCaSync(object):
         print(file_set)
 
     def dropbox_diff_flickr(self):
-        diff_set = set()
         # folder_queue = []
-        dropbox_file_set = self.dropbox.ls()
-        flickr_file_set, flickr_index_dict = self.flickr.get_photosets_info()
-        logger.debug(flickr_file_set)
-        diff_set = dropbox_file_set.difference(flickr_file_set)
-        logger.debug(diff_set)
+        dropbox_file_set, dropbox_file_meta = self.dropbox.ls()
+        flickr_file_set, flickr_file_meta = self.flickr.get_photosets_info()
+        logger.debug('dropbox: ' + str(dropbox_file_set))
+        logger.debug('flickr: ' + str(flickr_file_set))
+        upload_set = dropbox_file_set.difference(flickr_file_set)
+        base_set = dropbox_file_set.difference(upload_set)
+        logger.debug('upload_set: ' + str(upload_set))
+        logger.debug('base_set: ' + str(base_set))
 
 
 class Dropbox(object):
@@ -77,13 +79,17 @@ class Dropbox(object):
             self.current_path + os.sep + path
         )
         file_set = set()
+        file_meta = {}
         if 'contents' in resp:
             for f in resp['contents']:
                 path_tokens = f['path'].split(os.sep)
                 name = os.sep.join(path_tokens[-1:])
                 encoding = locale.getdefaultlocale()[1]
                 file_set.add(('{0}'.format(name.encode(encoding))))
-        return file_set
+                file_meta[name.encode(encoding)] = {
+                    'is_dir': f['is_dir'],
+                }
+        return file_set, file_meta
 
     def download_file(self, from_path, to_path):
         """
@@ -160,15 +166,17 @@ class Flickr(object):
         resp_json = json.loads(resp.text.encode('utf-8'))
         photosets = resp_json['photosets']['photoset']
         # photosets = self.user.getPhotosets()
-        index_dict = {}
+        file_meta = {}
         titles = set()
         for photoset in photosets:
             title = photoset['title']['_content']
-            index_dict[title] = photoset['id']
+            file_meta[title] = {
+                'id': photoset['id'],
+            }
             titles.add(title)
         self.photoset_titles = titles
-        self.photosets_index_dict = index_dict
-        return titles, index_dict
+        self.photosets_file_meta = file_meta
+        return titles, file_meta
 
     def get_photos_info(self, photoset_name):
         photoset_id = self.photosets_index_dict[photoset_name]
@@ -191,6 +199,13 @@ class Flickr(object):
 
 
 def main():
+    formatter = logging.Formatter('%(levelname)s: %(message)s')
+    console = logging.StreamHandler(stream=sys.stdout)
+    console.setLevel(logging.DEBUG)
+    console.setFormatter(formatter)
+    logger.addHandler(console)
+    logger.setLevel(logging.DEBUG)
+
     parser = SafeConfigParser()
     parser.read(CONF_FILE)
 
