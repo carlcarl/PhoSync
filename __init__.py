@@ -3,26 +3,22 @@
 
 import os
 import sys
+import shutil
 import locale
 import tempfile
 import logging
 from ConfigParser import SafeConfigParser
 from dropbox import client
-# import flickr_api
-# from oauth import oauth
 import uniout
 assert uniout
 import requests
 import md5
 import json
+from xml.dom import minidom
 
-# logging.basicConfig(
-#     stream=sys.stdout,
-#     format='%(levelname)s: %(message)s',
-#     level=logging.DEBUG
-# )
 logger = logging.getLogger(__name__)
 CONF_FILE = 'cacasync.conf'
+TMP_DIR = ''
 
 
 class CaCaSync(object):
@@ -32,20 +28,47 @@ class CaCaSync(object):
         self.flickr = flickr
         self.gplus = gplus
 
-    def dropbox_sync_flickr(self, dropbox_folder=''):
-        file_set = self.dropbox.download_folder(dropbox_folder)
-        print(file_set)
+    def dropbox_sync_flickr(self):
+        # dropbox_file_set, dropbox_file_meta = self.dropbox.ls()
+        # flickr_file_set, flickr_file_meta = self.flickr.get_photosets_info()
+        upload_set, base_set = self.dropbox_diff_flickr()
+        for folder in upload_set:
+            self._dropbox_sync_flickr(folder)
+        # TODO
+        # for folder in base_set:
+        #     sub_upload_set, sub_base_set = self.dropbox_diff_flickr(folder)
+        #     for f in sub_upload_set:
+        #         self._dropbox_sync_flickr(f)
 
-    def dropbox_diff_flickr(self):
+    def _dropbox_sync_flickr(self, folder=''):
+        file_set = self.dropbox.download_folder(folder)
+        logger.debug(file_set)
+        photo_id_list = []
+        for f in file_set:
+            photo_id_list.append(
+                self.flickr.upload_photo(folder, f)
+            )
+        if photo_id_list:  # Not a empty folder
+            photoset_id = self.flickr.create_photoset(folder, photo_id_list[0])
+            for photo_id in photo_id_list[1:]:
+                self.flickr.add_photo_to_photoset(photoset_id, photo_id)
+
+    def dropbox_diff_flickr(self, folder=''):
         # folder_queue = []
-        dropbox_file_set, dropbox_file_meta = self.dropbox.ls()
-        flickr_file_set, flickr_file_meta = self.flickr.get_photosets_info()
+        if folder == '':
+            dropbox_file_set, dropbox_file_meta = self.dropbox.ls()
+            flickr_file_set, flickr_file_meta = self.flickr.get_photosets_info()
+        else:
+            dropbox_file_set, dropbox_file_meta = self.dropbox.ls(folder)
+            flickr_file_set, flickr_file_meta = self.flickr.get_photos_info(folder)
         logger.debug('dropbox: ' + str(dropbox_file_set))
         logger.debug('flickr: ' + str(flickr_file_set))
+
         upload_set = dropbox_file_set.difference(flickr_file_set)
         base_set = dropbox_file_set.difference(upload_set)
         logger.debug('upload_set: ' + str(upload_set))
         logger.debug('base_set: ' + str(base_set))
+        return upload_set, base_set
 
 
 class Dropbox(object):
@@ -60,19 +83,18 @@ class Dropbox(object):
 
         self.api_client = client.DropboxClient(app_token)
 
-        tmp_dir = tempfile.gettempdir() + os.sep + 'cacasync'
-        self._make_tmp_dir(tmp_dir)
-        tmp_dir = tmp_dir + os.sep + app_token
-        self._make_tmp_dir(tmp_dir)
-        self.tmp_dir = tmp_dir
+        global TMP_DIR
+        TMP_DIR = (tempfile.gettempdir() + os.sep +
+                   'cacasync' + os.sep + app_token)
+        self._create_tmp_dir()
 
-    def _make_tmp_dir(self, tmp_dir):
-        if os.path.exists(tmp_dir):
-            if not os.path.isdir(tmp_dir):
-                logger.error('{path} is not a directory'.format(path=tmp_dir))
+    def _create_tmp_dir(self):
+        if os.path.exists(TMP_DIR):
+            if not os.path.isdir(TMP_DIR):
+                logger.error('{path} is not a directory'.format(path=TMP_DIR))
                 sys.exit(1)
         else:
-            os.mkdir(tmp_dir)
+            os.makedirs(TMP_DIR)
 
     def ls(self, path=''):
         resp = self.api_client.metadata(
@@ -85,7 +107,7 @@ class Dropbox(object):
                 path_tokens = f['path'].split(os.sep)
                 name = os.sep.join(path_tokens[-1:])
                 encoding = locale.getdefaultlocale()[1]
-                file_set.add(('{0}'.format(name.encode(encoding))))
+                file_set.add('{0}'.format(name.encode(encoding)))
                 file_meta[name.encode(encoding)] = {
                     'is_dir': f['is_dir'],
                 }
@@ -99,6 +121,7 @@ class Dropbox(object):
         Dropbox> get file.txt ~/dropbox-file.txt
         """
         to_file = open(os.path.expanduser(to_path), 'wb')
+        logger.debug(os.path.expanduser(to_path))
 
         f, metadata = self.api_client.get_file_and_metadata(
             self.current_path + os.sep + from_path
@@ -107,8 +130,11 @@ class Dropbox(object):
         to_file.write(f.read())
 
     def download_folder(self, from_path):
-        file_set = self.ls(from_path)
-        to_path = self.tmp_dir + os.sep + from_path
+        file_set, file_meta = self.ls(from_path)
+        logger.debug(file_set)
+        to_path = TMP_DIR + os.sep + from_path
+        if os.path.exists(to_path):
+            shutil.rmtree(to_path)
         os.makedirs(to_path)
         for f in file_set:
             self.download_file(from_path + os.sep + f, to_path + os.sep + f)
@@ -123,15 +149,8 @@ class Flickr(object):
         self.app_token = app_token
         self.app_secret = app_secret
         self.rest_url = 'http://flickr.com/services/rest/'
+        self.upload_url = 'http://up.flickr.com/services/upload/'
 
-        # flickr_api.set_keys(api_key, api_secret)
-        # self.api_client = flickr_api.auth.AuthHandler(callback=None)
-        # self.api_client.access_token = oauth.OAuthToken(
-        #     app_token,
-        #     app_secret
-        # )
-        # flickr_api.set_auth_handler(self.api_client)
-        # self.user = flickr_api.test.login()
         self.photosets_index_dict = None
         self.photoset_titles = None
 
@@ -160,12 +179,13 @@ class Flickr(object):
         return ('api_sig', api_sig)
 
     def get_photosets_info(self):
-        args = self._get_request_args('flickr.photosets.getList')
-        resp = requests.post(self.rest_url, params=args)
+        args = self._get_request_args(
+            method='flickr.photosets.getList'
+        )
+        resp = requests.post(self.rest_url, data=args)
         logger.debug(resp.text.encode('utf-8'))
         resp_json = json.loads(resp.text.encode('utf-8'))
         photosets = resp_json['photosets']['photoset']
-        # photosets = self.user.getPhotosets()
         file_meta = {}
         titles = set()
         for photoset in photosets:
@@ -181,21 +201,71 @@ class Flickr(object):
     def get_photos_info(self, photoset_name):
         photoset_id = self.photosets_index_dict[photoset_name]
         args = self._get_request_args(
-            'flickr.photosets.getPhotos',
+            method='flickr.photosets.getPhotos',
             photoset_id=photoset_id
         )
         resp = requests.get(self.rest_url, params=args)
         logger.debug(resp.text.encode('utf-8'))
         resp_json = json.loads(resp.text.encode('utf-8'))
         photos = resp_json['photos']
-        index_dict = {}
+        file_meta = {}
         titles = set()
         for photo in photos:
-            index_dict[photo['title']] = photo['id']
+            file_meta[photo['title']] = photo['id']
             titles.add(photo['title'])
-        return titles, index_dict
-        # photos = photoset.getPhotos()
-        # print(photos)
+        return titles, file_meta
+
+    def upload_photo(self, folder, photo_name):
+        args = [
+            ('api_key', self.api_key),
+            ('auth_token', self.app_token),
+            ('tilte', photo_name),
+        ]
+        args.sort(key=lambda tup: tup[0])
+        api_sig = self._get_api_sig(args)
+        args.append(api_sig)
+
+        file_path = TMP_DIR + os.sep + folder + os.sep + photo_name
+        logger.debug('upload image: ' + file_path)
+        files = {
+            'photo': open(file_path, 'rb'),
+        }
+        resp = requests.post(self.upload_url, data=args, files=files)
+        logger.debug('upload response: ' + resp.text)
+        resp_xml = minidom.parseString(resp.text)
+        rsp = resp_xml.getElementsByTagName('rsp')[0]
+        if rsp.attributes['stat'].value == 'fail':
+            err = resp_xml.getElementsByTagName('err')[0]
+            logger.error(err.attributes['msg'].value)
+            sys.exit(1)
+        elif rsp.attributes['stat'].value == 'ok':
+            photo_id = resp_xml.getElementsByTagName('photoid')[0]
+            photo_id = photo_id.childNodes[0].nodeValue
+            return photo_id
+        else:
+            logger.error('Unknown error when uploading photos')
+            sys.exit(1)
+
+    def create_photoset(self, photoset_name, primary_photo_id):
+        args = self._get_request_args(
+            method='flickr.photosets.create',
+            title=photoset_name,
+            primary_photo_id=primary_photo_id
+        )
+        resp = requests.post(self.rest_url, data=args)
+        logger.debug(resp.text)
+        resp_json = json.loads(resp.text)
+        photoset_id = resp_json['photoset']['id']
+        return photoset_id
+
+    def add_photo_to_photoset(self, photoset_id, photo_id):
+        args = self._get_request_args(
+            method='flickr.photosets.addPhoto',
+            photoset_id=photoset_id,
+            photo_id=photo_id
+        )
+        resp = requests.post(self.rest_url, data=args)
+        logger.debug(resp.text)
 
 
 def main():
@@ -234,12 +304,10 @@ def main():
         flickr_app_token,
         flickr_app_secret
     )
-    # flickr.get_photosets_info()
-    # flickr.get_photos('box')
+    # flickr.create_photoset('test', '4837317332')
 
     cacasync = CaCaSync(dropbox, flickr)
-    cacasync.dropbox_diff_flickr()
-    # cacasync.dropbox_sync_flickr('test')
+    cacasync.dropbox_sync_flickr()
 
 
 if __name__ == '__main__':
