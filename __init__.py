@@ -27,26 +27,26 @@ class CaCaSync(object):
         self.flickr = flickr
         self.gplus = gplus
 
-    def dropbox_sync_flickr(self):
+    def sync_flickr(self):
         dropbox_list, dropbox_meta = self.dropbox.ls()
         flickr_list, flickr_meta = self.flickr.get_photosets_info()
-        upload_set, base_set = self.dropbox_diff_flickr(
+        upload_set, base_set = self.diff_flickr(
             dropbox_list,
             flickr_list
         )
         for folder in upload_set:
-            self._dropbox_sync_flickr_root(folder)
+            self._sync_flickr_root(folder)
         for folder in base_set:
             sub_dropbox_list, sub_dropbox_meta = self.dropbox.ls(folder)
             sub_flickr_list, sub_flickr_meta = self.flickr.get_photos_info(folder)
-            sub_upload_set, sub_base_set = self.dropbox_diff_flickr(
+            sub_upload_set, sub_base_set = self.diff_flickr(
                 sub_dropbox_list,
                 sub_flickr_list
             )
             photoset_id = flickr_meta[folder]['id']
-            self._dropbox_sync_flickr_leaf(folder, photoset_id, sub_upload_set)
+            self._sync_flickr_leaf(folder, photoset_id, sub_upload_set)
 
-    def _dropbox_sync_flickr_root(self, folder):
+    def _sync_flickr_root(self, folder):
         file_set = self.dropbox.download_folder(folder)
         logger.debug(file_set)
         photo_id_list = []
@@ -59,7 +59,7 @@ class CaCaSync(object):
             for photo_id in photo_id_list[1:]:
                 self.flickr.add_photo_to_photoset(photoset_id, photo_id)
 
-    def _dropbox_sync_flickr_leaf(self, folder, photoset_id, file_set):
+    def _sync_flickr_leaf(self, folder, photoset_id, file_set):
         file_set = self.dropbox.download_folder(folder, file_set)
         logger.debug(file_set)
         photo_id_list = []
@@ -70,7 +70,7 @@ class CaCaSync(object):
         for photo_id in photo_id_list:
             self.flickr.add_photo_to_photoset(photoset_id, photo_id)
 
-    def dropbox_diff_flickr(self, dropbox_file_set, flickr_file_set):
+    def diff_flickr(self, dropbox_file_set, flickr_file_set):
         # folder_queue = []
         logger.debug('dropbox: ' + str(dropbox_file_set))
         logger.debug('flickr: ' + str(flickr_file_set))
@@ -323,7 +323,7 @@ def main():
 
     cacasync = CaCaSync(dropbox, flickr)
     # print(dropbox.ls('box'))
-    cacasync.dropbox_sync_flickr()
+    cacasync.sync_flickr()
 
 
 if __name__ == '__main__':
