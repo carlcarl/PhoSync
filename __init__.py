@@ -13,11 +13,57 @@ assert uniout
 import requests
 import md5
 import json
+import time
 from xml.dom import minidom
+from functools import wraps
 
 logger = logging.getLogger(__name__)
 CONF_FILE = 'cacasync.conf'
 TMP_DIR = ''
+
+
+def retry(tries=2, delay=1):
+    def deco_retry(f):
+        @wraps(f)
+        def retry(*args, **kwargs):
+            _tries, _delay = tries, delay
+            while _tries > 1:
+                try:
+                    result = f(*args, **kwargs)
+                except UploadError as e:
+                    logging.error(
+                        '[{f}] {msg}, retry...'.format(
+                            f=f.__name__,
+                            msg=e.msg
+                        )
+                    )
+                    time.sleep(_delay)
+                    _tries -= 1
+                else:
+                    return result
+            try:
+                result = f(*args, **kwargs)
+            except UploadError as e:
+                logger.critical(
+                    '[{f}] {msg}, program exit'.format(
+                        f=f.__name__,
+                        msg=e.msg
+                    )
+                )
+                sys.exit(1)
+            else:
+                return result
+        return retry
+    return deco_retry
+
+
+class UploadError(Exception):
+    FLICKR_UPLOAD_ERROR = 0
+    UNKNOWN_ERROR = -1
+
+    def __init__(self, errno, msg):
+        self.errno = errno
+        self.msg = msg
 
 
 class CaCaSync(object):
@@ -51,9 +97,8 @@ class CaCaSync(object):
         logger.debug(file_set)
         photo_id_list = []
         for f in file_set:
-            photo_id_list.append(
-                self.flickr.upload_photo(folder, f)
-            )
+            result = self.flickr.upload_photo(folder, f)
+            photo_id_list.append(result)
         if photo_id_list:  # Not a empty folder
             photoset_id = self.flickr.create_photoset(folder, photo_id_list[0])
             for photo_id in photo_id_list[1:]:
@@ -64,9 +109,8 @@ class CaCaSync(object):
         logger.debug(file_set)
         photo_id_list = []
         for f in file_set:
-            photo_id_list.append(
-                self.flickr.upload_photo(folder, f)
-            )
+            result = self.flickr.upload_photo(folder, f)
+            photo_id_list.append(result)
         for photo_id in photo_id_list:
             self.flickr.add_photo_to_photoset(photoset_id, photo_id)
 
@@ -230,6 +274,7 @@ class Flickr(object):
             titles.add(photo['title'])
         return titles, file_meta
 
+    @retry()
     def upload_photo(self, folder, photo_name):
         args = [
             ('api_key', self.api_key),
@@ -252,14 +297,21 @@ class Flickr(object):
         if rsp.attributes['stat'].value == 'fail':
             err = resp_xml.getElementsByTagName('err')[0]
             logger.error(err.attributes['msg'].value)
-            sys.exit(1)
+            raise UploadError(
+                UploadError.FLICKR_UPLOAD_ERROR,
+                err.attributes['msg'].value
+            )
         elif rsp.attributes['stat'].value == 'ok':
             photo_id = resp_xml.getElementsByTagName('photoid')[0]
             photo_id = photo_id.childNodes[0].nodeValue
             return photo_id
         else:
-            logger.error('Unknown error when uploading photos')
-            sys.exit(1)
+            err_msg = 'Unknown error when uploading photos'
+            logger.error(err_msg)
+            raise UploadError(
+                UploadError.UNKNOWN_ERROR,
+                err_msg
+            )
 
     def create_photoset(self, photoset_name, primary_photo_id):
         args = self._get_request_args(
