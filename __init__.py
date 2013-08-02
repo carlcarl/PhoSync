@@ -23,6 +23,9 @@ TMP_DIR = ''
 
 
 def retry(tries=2, delay=1):
+    '''
+    Retry decorator, used for network requests like upload or download
+    '''
     def deco_retry(f):
         @wraps(f)
         def retry(*args, **kwargs):
@@ -58,6 +61,9 @@ def retry(tries=2, delay=1):
 
 
 class UploadError(Exception):
+    '''
+    Upload Exception
+    '''
     FLICKR_UPLOAD_ERROR = 0
     UNKNOWN_ERROR = -1
 
@@ -115,26 +121,42 @@ class CaCaSync(object):
             self.flickr.add_photo_to_photoset(photoset_id, photo_id)
 
     def diff_flickr(self, dropbox_file_set, flickr_file_set):
+        '''
+        Get the different and same part of dropbox and flickr file list
+        Args:
+            dropbox_file_set: Dropbox file sets
+            flickr_file_set: Flickr file sets
+        Returns:
+            diff_set: Different part
+            base_set: Same part
+        '''
         # folder_queue = []
         logger.debug('dropbox: ' + str(dropbox_file_set))
         logger.debug('flickr: ' + str(flickr_file_set))
 
-        upload_set = dropbox_file_set.difference(flickr_file_set)
-        base_set = dropbox_file_set.difference(upload_set)
-        logger.debug('upload_set: ' + str(upload_set))
+        diff_set = dropbox_file_set.difference(flickr_file_set)
+        base_set = dropbox_file_set.difference(diff_set)
+        logger.debug('diff_set: ' + str(diff_set))
         logger.debug('base_set: ' + str(base_set))
-        return upload_set, base_set
+        return diff_set, base_set
 
 
 class Dropbox(object):
 
     def __init__(
-        self, api_key, api_secret, app_token, current_path
+        self, api_key, api_secret, app_token, photo_path
     ):
+        '''
+        Args:
+            api_key: API key string
+            api_secret: API secret string
+            app_token: User auth token
+            photo_path: Photo path of Dropbox
+        '''
         self.api_token = api_key
         self.api_secret = api_secret
         self.app_token = app_token
-        self.current_path = current_path
+        self.photo_path = photo_path
 
         self.api_client = client.DropboxClient(app_token)
 
@@ -144,6 +166,9 @@ class Dropbox(object):
         self._create_tmp_dir()
 
     def _create_tmp_dir(self):
+        '''
+        Create tmp dir recursively, exit if fail
+        '''
         if os.path.exists(TMP_DIR):
             if not os.path.isdir(TMP_DIR):
                 logger.error('{path} is not a directory'.format(path=TMP_DIR))
@@ -152,8 +177,16 @@ class Dropbox(object):
             os.makedirs(TMP_DIR)
 
     def ls(self, path=''):
+        '''
+        List the files under the path.
+        The path is under the `photo_path`, ex:
+            photo_path='Photos', path='test'
+            This method will list all files under 'Photos/test'
+        Args:
+            path: path string, default is ''
+        '''
         resp = self.api_client.metadata(
-            self.current_path + os.sep + path
+            self.photo_path + os.sep + path
         )
         file_set = set()
         file_meta = {}
@@ -169,22 +202,33 @@ class Dropbox(object):
         return file_set, file_meta
 
     def download_file(self, from_path, to_path):
-        """
-        Copy file from Dropbox to local file and print out the metadata.
-
-        Examples:
-        Dropbox> get file.txt ~/dropbox-file.txt
-        """
+        '''
+        Copy file, metadata from Dropbox to local file, ex:
+            from_path='Photo/test/test.jpg', to_path='/tmp/test/test.jpg'
+        Args:
+            from_path: The file path under `photo_path`
+            to_path: The file path where to be saved
+        '''
         to_file = open(os.path.expanduser(to_path), 'wb')
         logger.debug(os.path.expanduser(to_path))
 
         f, metadata = self.api_client.get_file_and_metadata(
-            self.current_path + os.sep + from_path
+            self.photo_path + os.sep + from_path
         )
         # print 'Metadata:', metadata
         to_file.write(f.read())
 
     def download_folder(self, from_path, file_set=None):
+        '''
+        Download a whole folder.
+        If `file_set` is not None, then only download the files in the set
+        Args:
+            from_path: The file path under `photo_path`
+            file_set: If is None, download whole folder,
+                else only download files in the file_set
+        Returns:
+            file_set: The downloaded files
+        '''
         if file_set is None:
             file_set, file_meta = self.ls(from_path)
         logger.debug(file_set)
@@ -211,6 +255,16 @@ class Flickr(object):
         self.photoset_titles = None
 
     def _get_request_args(self, method, **kwargs):
+        '''
+        Use `method` and other settings to produce a flickr API arguments.
+        Here also use json as the return type.
+        Args:
+            method: The method string provided by flickr,
+                ex: flickr.photosets.getPhotos
+            **kwargs: Other settings
+        Returns:
+            args: An argument list used for post request
+        '''
         args = [
             ('api_key', self.api_key),
             ('auth_token', self.app_token),
@@ -228,6 +282,13 @@ class Flickr(object):
         return args
 
     def _get_api_sig(self, args):
+        '''
+        Flickr API need a hash string which made using post arguments
+        Args:
+            args: Post args(list)
+        Returns:
+            api_sig: A tuple of api_sig, ex: ('api_sig', 'abcdefg')
+        '''
         tmp_sig = self.api_secret
         for i in args:
             tmp_sig = tmp_sig + i[0] + i[1]
@@ -236,6 +297,13 @@ class Flickr(object):
         return ('api_sig', api_sig)
 
     def get_photosets_info(self):
+        '''
+        Get flickr photosets information
+        Returns:
+            tltles: Photoset name list
+            file_meta: A dict for photoset name to it's other information,
+                ex: {'photoset_name': {'id':'aaaaaa'}}
+        '''
         args = self._get_request_args(
             method='flickr.photosets.getList'
         )
@@ -256,6 +324,13 @@ class Flickr(object):
         return titles, file_meta
 
     def get_photos_info(self, photoset_name):
+        '''
+        Get flickr photos information in the photoset
+        Returns:
+            tltles: Photo name list
+            file_meta: A dict for photo name to it's other information,
+                ex: {'photo_name': {'id':'aaaaaa'}}
+        '''
         photoset_id = self.photosets_file_meta[photoset_name]['id']
         args = self._get_request_args(
             method='flickr.photosets.getPhotos',
@@ -314,6 +389,14 @@ class Flickr(object):
             )
 
     def create_photoset(self, photoset_name, primary_photo_id):
+        '''
+        Create a photoset with a primary photo(cover)
+        Args:
+            photoset_name: The photoset name
+            primary_photo_id: The id of the photo
+        Returns:
+            photoset_id: The id of the photoset created
+        '''
         args = self._get_request_args(
             method='flickr.photosets.create',
             title=photoset_name,
@@ -326,6 +409,12 @@ class Flickr(object):
         return photoset_id
 
     def add_photo_to_photoset(self, photoset_id, photo_id):
+        '''
+        Add the photo to the photoset
+        Args:
+            photoset_id: The id of the photoset
+            photo_id: The id of the photo
+        '''
         args = self._get_request_args(
             method='flickr.photosets.addPhoto',
             photoset_id=photoset_id,
@@ -350,13 +439,13 @@ def main():
     dropbox_api_secret = parser.get('dropbox', 'APP_SECRET')
 
     dropbox_app_token = parser.get('dropbox', 'APP_TOKEN')
-    dropbox_current_path = parser.get('dropbox', 'CURRENT_PATH')
+    dropbox_photo_path = parser.get('dropbox', 'CURRENT_PATH')
 
     dropbox = Dropbox(
         dropbox_api_key,
         dropbox_api_secret,
         dropbox_app_token,
-        dropbox_current_path
+        dropbox_photo_path
     )
 
     flickr_api_key = parser.get('flickr', 'API_KEY')
