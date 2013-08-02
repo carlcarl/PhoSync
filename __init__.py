@@ -251,7 +251,7 @@ class Flickr(object):
         self.rest_url = 'http://flickr.com/services/rest/'
         self.upload_url = 'http://up.flickr.com/services/upload/'
 
-        self.photosets_index_dict = None
+        self.photosets_file_meta = None
         self.photoset_titles = None
 
     def _get_request_args(self, method, **kwargs):
