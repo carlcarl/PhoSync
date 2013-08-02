@@ -22,7 +22,7 @@ CONF_FILE = 'cacasync.conf'
 TMP_DIR = ''
 
 
-def retry(tries=2, delay=1):
+def retry(tries=3, delay=1):
     '''
     Retry decorator, used for network requests like upload or download
     '''
