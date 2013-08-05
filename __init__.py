@@ -487,7 +487,6 @@ def main():
     # flickr.create_photoset('test', '4837317332')
 
     cacasync = CaCaSync(dropbox, flickr)
-    # print(dropbox.ls('box'))
     cacasync.sync_flickr()
 
 
