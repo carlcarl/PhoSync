@@ -184,6 +184,10 @@ class Dropbox(object):
             This method will list all files under 'Photos/test'
         Args:
             path: path string, default is ''
+        Returns:
+            file_set: Dropbox file set
+            file_meta: A dict for dropbox file name to it's other information,
+                ex: {'file_name': {'id':'aaaaaa', 'id_dir: 'False'}}
         '''
         resp = self.api_client.metadata(
             self.photo_path + os.sep + path
