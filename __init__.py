@@ -485,7 +485,6 @@ def main():
         flickr_app_secret
     )
     # flickr.create_photoset('test', '4837317332')
-
     cacasync = CaCaSync(dropbox, flickr)
     cacasync.sync_flickr()
 
