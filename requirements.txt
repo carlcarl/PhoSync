@@ -1,0 +1,4 @@
+dropbox==1.6
+requests==1.2.3
+uniout==0.2.2
+wsgiref==0.1.2
