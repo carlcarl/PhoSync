@@ -20,6 +20,13 @@ from functools import wraps
 logger = logging.getLogger(__name__)
 CONF_FILE = 'cacasync.conf'
 TMP_DIR = ''
+SUPPORT_IMAGE_LIST = [
+    'jpeg',
+    'jpg',
+    'png',
+    'gif',
+    'bmp',
+]
 
 
 def retry(tries=3, delay=1):
@@ -176,6 +183,18 @@ class Dropbox(object):
         else:
             os.makedirs(TMP_DIR)
 
+    def is_image(self, file_path):
+        '''
+        Check a file is a image or not.
+        Here only use the file extension to check
+        Args:
+            file_path: Path of the file
+        Returns:
+            True if is a image, else False
+        '''
+        file_name, file_extension = os.path.splitext(file_path)
+        return file_extension.lower() in SUPPORT_IMAGE_LIST
+
     def ls(self, path=''):
         '''
         List the files under the path.
@@ -187,7 +206,7 @@ class Dropbox(object):
         Returns:
             file_set: Dropbox file set
             file_meta: A dict for dropbox file name to it's other information,
-                ex: {'file_name': {'id':'aaaaaa', 'id_dir: 'False'}}
+                ex: {'file_name': {'id':'aaaaaa', 'is_dir: False}}
         '''
         resp = self.api_client.metadata(
             self.photo_path + os.sep + path
@@ -196,9 +215,10 @@ class Dropbox(object):
         file_meta = {}
         if 'contents' in resp:
             for f in resp['contents']:
+                if f['is_dir'] or (not self.is_image(f['path'])):
+                    continue
                 path_tokens = f['path'].split(os.sep)
                 name = os.sep.join(path_tokens[-1:])
-                # encoding = locale.getdefaultlocale()[1]
                 file_set.add(name)
                 file_meta[name] = {
                     'is_dir': f['is_dir'],
