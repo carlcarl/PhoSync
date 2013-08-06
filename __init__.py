@@ -6,26 +6,25 @@ import sys
 import shutil
 import tempfile
 import logging
+import argparse
 from ConfigParser import SafeConfigParser
 from dropbox import client
-import uniout
-assert uniout
 import requests
 import md5
 import json
 import time
+import uniout
+assert uniout
 from xml.dom import minidom
-from functools import wraps
 
 logger = logging.getLogger(__name__)
 CONF_FILE = 'cacasync.conf'
 TMP_DIR = ''
-SUPPORT_IMAGE_LIST = [
-    'jpeg',
-    'jpg',
-    'png',
-    'gif',
-    'bmp',
+SUPPORT_MIME_LIST = [
+    'image/jpeg',
+    'image/png',
+    'image/gif',
+    'image/x-ms-bmp',
 ]
 
 
@@ -34,7 +33,6 @@ def retry(tries=3, delay=1):
     Retry decorator, used for network requests like upload or download
     '''
     def deco_retry(f):
-        @wraps(f)
         def retry(*args, **kwargs):
             _tries, _delay = tries, delay
             while _tries > 1:
@@ -67,6 +65,17 @@ def retry(tries=3, delay=1):
     return deco_retry
 
 
+def is_image(mime_type):
+    '''
+    Check a mime type is a image or not.
+    Args:
+        mime_type: mime type string, ex: image/png
+    Returns:
+        True if is a image, else False
+    '''
+    return mime_type in SUPPORT_MIME_LIST
+
+
 class UploadError(Exception):
     '''
     Upload Exception
@@ -87,44 +96,44 @@ class CaCaSync(object):
         self.gplus = gplus
 
     def sync_flickr(self):
-        dropbox_list, dropbox_meta = self.dropbox.ls()
-        flickr_list, flickr_meta = self.flickr.get_photosets_info()
-        upload_set, base_set = self.diff_flickr(
-            dropbox_list,
-            flickr_list
+        dropbox_file_names, dropbox_file_metas = self.dropbox.ls()
+        flickr_photoset_titles, flickr_photoset_metas = self.flickr.get_photosets_info()
+        diff_set, base_set = self.diff_flickr(
+            dropbox_file_names,
+            flickr_photoset_titles
         )
-        for folder in upload_set:
+        for folder in diff_set:
             self._sync_flickr_root(folder)
         for folder in base_set:
-            sub_dropbox_list, sub_dropbox_meta = self.dropbox.ls(folder)
-            sub_flickr_list, sub_flickr_meta = self.flickr.get_photos_info(folder)
-            sub_upload_set, sub_base_set = self.diff_flickr(
-                sub_dropbox_list,
-                sub_flickr_list
+            s_dropbox_file_names, s_dropbox_file_metas = self.dropbox.ls(folder)
+            s_flickr_photoset_titles, s_flickr_photoset_metas = self.flickr.get_photos_info(folder)
+            s_diff_set, s_base_set = self.diff_flickr(
+                s_dropbox_file_names,
+                s_flickr_photoset_titles
             )
-            photoset_id = flickr_meta[folder]['id']
-            self._sync_flickr_leaf(folder, photoset_id, sub_upload_set)
+            photoset_id = flickr_photoset_metas[folder]['id']
+            self._sync_flickr_leaf(folder, photoset_id, s_diff_set)
 
     def _sync_flickr_root(self, folder):
         file_set = self.dropbox.download_folder(folder)
-        logger.debug(file_set)
-        photo_id_list = []
+        logger.debug('dropbox download at root: ' + str(file_set))
+        flickr_photo_ids = []
         for f in file_set:
-            result = self.flickr.upload_photo(folder, f)
-            photo_id_list.append(result)
-        if photo_id_list:  # Not a empty folder
-            photoset_id = self.flickr.create_photoset(folder, photo_id_list[0])
-            for photo_id in photo_id_list[1:]:
+            photo_id = self.flickr.upload_photo(folder, f)
+            flickr_photo_ids.append(photo_id)
+        if flickr_photo_ids:  # Not a empty folder
+            photoset_id = self.flickr.create_photoset(folder, flickr_photo_ids[0])
+            for photo_id in flickr_photo_ids[1:]:
                 self.flickr.add_photo_to_photoset(photoset_id, photo_id)
 
     def _sync_flickr_leaf(self, folder, photoset_id, file_set):
         file_set = self.dropbox.download_folder(folder, file_set)
-        logger.debug(file_set)
-        photo_id_list = []
+        logger.debug('dropbox download at leaf: ' + str(file_set))
+        photo_ids = []
         for f in file_set:
-            result = self.flickr.upload_photo(folder, f)
-            photo_id_list.append(result)
-        for photo_id in photo_id_list:
+            photo_id = self.flickr.upload_photo(folder, f)
+            photo_ids.append(photo_id)
+        for photo_id in photo_ids:
             self.flickr.add_photo_to_photoset(photoset_id, photo_id)
 
     def diff_flickr(self, dropbox_file_set, flickr_file_set):
@@ -138,6 +147,7 @@ class CaCaSync(object):
             base_set: Same part
         '''
         # folder_queue = []
+        logger.debug('=====================================')
         logger.debug('dropbox: ' + str(dropbox_file_set))
         logger.debug('flickr: ' + str(flickr_file_set))
 
@@ -145,11 +155,11 @@ class CaCaSync(object):
         base_set = dropbox_file_set.difference(diff_set)
         logger.debug('diff_set: ' + str(diff_set))
         logger.debug('base_set: ' + str(base_set))
+        logger.debug('=====================================')
         return diff_set, base_set
 
 
 class Dropbox(object):
-
     def __init__(
         self, api_key, api_secret, app_token, photo_path
     ):
@@ -183,18 +193,6 @@ class Dropbox(object):
         else:
             os.makedirs(TMP_DIR)
 
-    def is_image(self, file_path):
-        '''
-        Check a file is a image or not.
-        Here only use the file extension to check
-        Args:
-            file_path: Path of the file
-        Returns:
-            True if is a image, else False
-        '''
-        file_name, file_extension = os.path.splitext(file_path)
-        return file_extension.lower() in SUPPORT_IMAGE_LIST
-
     def ls(self, path=''):
         '''
         List the files under the path.
@@ -215,7 +213,7 @@ class Dropbox(object):
         file_meta = {}
         if 'contents' in resp:
             for f in resp['contents']:
-                if f['is_dir'] or (not self.is_image(f['path'])):
+                if (not f['is_dir']) and (not is_image(f['mime_type'])):
                     continue
                 path_tokens = f['path'].split(os.sep)
                 name = os.sep.join(path_tokens[-1:])
@@ -234,7 +232,7 @@ class Dropbox(object):
             to_path: The file path where to be saved
         '''
         to_file = open(os.path.expanduser(to_path), 'wb')
-        logger.debug(os.path.expanduser(to_path))
+        logger.debug('Tmp image path: ' + os.path.expanduser(to_path))
 
         f, metadata = self.api_client.get_file_and_metadata(
             self.photo_path + os.sep + from_path
@@ -255,7 +253,6 @@ class Dropbox(object):
         '''
         if file_set is None:
             file_set, file_meta = self.ls(from_path)
-        logger.debug(file_set)
         to_path = TMP_DIR + os.sep + from_path
         if os.path.exists(to_path):
             shutil.rmtree(to_path)
@@ -266,7 +263,6 @@ class Dropbox(object):
 
 
 class Flickr(object):
-
     def __init__(self, api_key, api_secret, app_token, app_secret):
         self.api_key = api_key
         self.api_secret = api_secret
@@ -275,7 +271,7 @@ class Flickr(object):
         self.rest_url = 'http://flickr.com/services/rest/'
         self.upload_url = 'http://up.flickr.com/services/upload/'
 
-        self.photosets_file_meta = None
+        self.photoset_metas = None
         self.photoset_titles = None
 
     def _get_request_args(self, method, **kwargs):
@@ -297,7 +293,6 @@ class Flickr(object):
             ('nojsoncallback', '1'),
         ]
         if kwargs:
-            print(kwargs)
             for key, value in kwargs.iteritems():
                 args.append((key, value))
         args.sort(key=lambda tup: tup[0])
@@ -316,7 +311,7 @@ class Flickr(object):
         tmp_sig = self.api_secret
         for i in args:
             tmp_sig = tmp_sig + i[0] + i[1]
-        print(tmp_sig)
+        logger.debug(tmp_sig)
         api_sig = md5.new(tmp_sig.encode('utf-8')).hexdigest()
         return ('api_sig', api_sig)
 
@@ -325,53 +320,55 @@ class Flickr(object):
         Get flickr photosets information
         Returns:
             tltles: Photoset name list
-            file_meta: A dict for photoset name to it's other information,
+            photoset_metas: A dict for photoset name to it's other information,
                 ex: {'photoset_name': {'id':'aaaaaa'}}
         '''
         args = self._get_request_args(
             method='flickr.photosets.getList'
         )
         resp = requests.post(self.rest_url, data=args)
-        logger.debug(resp.text)
+        logger.debug('Flickr photoset resp: ' + resp.text)
         resp_json = json.loads(resp.text.encode('utf-8'))
         photosets = resp_json['photosets']['photoset']
-        file_meta = {}
-        titles = set()
+        photoset_metas = {}
+        photoset_titles = set()
         for photoset in photosets:
             title = photoset['title']['_content']
-            file_meta[title] = {
+            photoset_metas[title] = {
                 'id': photoset['id'],
             }
-            titles.add(title)
-        self.photoset_titles = titles
-        self.photosets_file_meta = file_meta
-        return titles, file_meta
+            photoset_titles.add(title)
+        self.photoset_titles = photoset_titles
+        self.photoset_metas = photoset_metas
+        return photoset_titles, photoset_metas
 
     def get_photos_info(self, photoset_name):
         '''
         Get flickr photos information in the photoset
         Returns:
             tltles: Photo name list
-            file_meta: A dict for photo name to it's other information,
+            photo_metas: A dict for photo name to it's other information,
                 ex: {'photo_name': {'id':'aaaaaa'}}
         '''
-        photoset_id = self.photosets_file_meta[photoset_name]['id']
+        if self.photoset_metas is None:
+            self.get_photosets_info()
+        photoset_id = self.photoset_metas[photoset_name]['id']
         args = self._get_request_args(
             method='flickr.photosets.getPhotos',
             photoset_id=photoset_id
         )
         resp = requests.post(self.rest_url, data=args)
-        logger.debug(resp.text)
+        logger.debug('Flickr photo resp: ' + resp.text)
         resp_json = json.loads(resp.text.encode('utf-8'))
         photos = resp_json['photoset']['photo']
-        file_meta = {}
-        titles = set()
+        photo_metas = {}
+        photo_titles = set()
         for photo in photos:
-            file_meta[photo['title']] = {
+            photo_metas[photo['title']] = {
                 'id': photo['id'],
             }
-            titles.add(photo['title'])
-        return titles, file_meta
+            photo_titles.add(photo['title'])
+        return photo_titles, photo_metas
 
     @retry()
     def upload_photo(self, folder, photo_name):
@@ -385,12 +382,12 @@ class Flickr(object):
         args.append(api_sig)
 
         file_path = TMP_DIR + os.sep + folder + os.sep + photo_name
-        logger.debug('upload image: ' + file_path)
+        logger.debug('Flicrk upload image: ' + file_path)
         files = {
             'photo': open(file_path, 'rb'),
         }
         resp = requests.post(self.upload_url, data=args, files=files)
-        logger.debug('upload response: ' + resp.text)
+        logger.debug('Flickr upload response: ' + resp.text)
         resp_xml = minidom.parseString(resp.text)
         rsp = resp_xml.getElementsByTagName('rsp')[0]
         if rsp.attributes['stat'].value == 'fail':
@@ -427,7 +424,7 @@ class Flickr(object):
             primary_photo_id=primary_photo_id
         )
         resp = requests.post(self.rest_url, data=args)
-        logger.debug(resp.text)
+        logger.debug('Flickr create photoset resp: ' + resp.text)
         resp_json = json.loads(resp.text)
         photoset_id = resp_json['photoset']['id']
         return photoset_id
@@ -448,7 +445,7 @@ class Flickr(object):
         logger.debug(resp.text)
 
 
-def main():
+def init_logger():
     formatter = logging.Formatter('%(levelname)s: %(message)s')
     console = logging.StreamHandler(stream=sys.stdout)
     console.setLevel(logging.DEBUG)
@@ -456,14 +453,66 @@ def main():
     logger.addHandler(console)
     logger.setLevel(logging.DEBUG)
 
-    parser = SafeConfigParser()
-    parser.read(CONF_FILE)
 
-    dropbox_api_key = parser.get('dropbox', 'APP_KEY')
-    dropbox_api_secret = parser.get('dropbox', 'APP_SECRET')
+def _parse_cli_args():
+    parser = argparse.ArgumentParser()
+    subparser = parser.add_subparsers()
+    ls_parser = subparser.add_parser('ls')
+    ls_parser.set_defaults(which='ls')
+    ls_parser.add_argument(
+        '-d',
+        nargs='?',
+        default=None,
+        const='',
+        help='List files in Dropbox under path',
+        metavar='<dropbox_path>'
+    )
+    ls_parser.add_argument(
+        '-f',
+        nargs='?',
+        default=None,
+        const='',
+        help='List files in Flickr photoset, list all photosets if empty',
+        metavar='<flickr photoset>'
+    )
+    sync_parser = subparser.add_parser('sync')
+    sync_parser.set_defaults(which='sync')
+    sync_parser.add_argument(
+        '-d',
+        nargs='?',
+        default=None,
+        const='',
+        help='Sync Dropbox under the path',
+        metavar='<dropbox_path>'
+    )
+    sync_parser.add_argument(
+        '-f',
+        nargs='?',
+        const='',
+        help='Flick photoset, sync all if empty',
+        metavar='<flickr photoset>'
+    )
+    args = parser.parse_args()
+    logger.debug(args)
+    return args
 
-    dropbox_app_token = parser.get('dropbox', 'APP_TOKEN')
-    dropbox_photo_path = parser.get('dropbox', 'CURRENT_PATH')
+
+class ConfigReader(object):
+    def __init__(self):
+        self._parser = SafeConfigParser()
+        self._parser.read(CONF_FILE)
+
+    def read(self, service_name, key):
+        return self._parser.get(service_name, key)
+
+
+def init_dropbox(reader_class):
+    reader = reader_class()
+    dropbox_api_key = reader.read('dropbox', 'APP_KEY')
+    dropbox_api_secret = reader.read('dropbox', 'APP_SECRET')
+
+    dropbox_app_token = reader.read('dropbox', 'APP_TOKEN')
+    dropbox_photo_path = reader.read('dropbox', 'CURRENT_PATH')
 
     dropbox = Dropbox(
         dropbox_api_key,
@@ -471,12 +520,16 @@ def main():
         dropbox_app_token,
         dropbox_photo_path
     )
+    return dropbox
 
-    flickr_api_key = parser.get('flickr', 'API_KEY')
-    flickr_api_secret = parser.get('flickr', 'API_SECRET')
 
-    flickr_app_token = parser.get('flickr', 'APP_TOKEN')
-    flickr_app_secret = parser.get('flickr', 'APP_SECRET')
+def init_flickr(reader_class):
+    reader = reader_class()
+    flickr_api_key = reader.read('flickr', 'API_KEY')
+    flickr_api_secret = reader.read('flickr', 'API_SECRET')
+
+    flickr_app_token = reader.read('flickr', 'APP_TOKEN')
+    flickr_app_secret = reader.read('flickr', 'APP_SECRET')
 
     flickr = Flickr(
         flickr_api_key,
@@ -484,9 +537,41 @@ def main():
         flickr_app_token,
         flickr_app_secret
     )
+    return flickr
+
+
+def ls_command(args):
+    if args.d is not None:
+        dropbox = init_dropbox(ConfigReader)
+        results, _ = dropbox.ls(args.d)
+        print(results)
+    if args.f is not None:
+        flickr = init_flickr(ConfigReader)
+        if args.f == '':
+            result, _ = flickr.get_photosets_info()
+        else:
+            result, _ = flickr.get_photos_info(args.f)
+        print(result)
+
+
+def sync_command(args):
+    if args.d and args.f:
+        dropbox = init_dropbox(ConfigReader)
+        flickr = init_flickr(ConfigReader)
+        cacasync = CaCaSync(dropbox, flickr)
+        cacasync.sync_flickr()
+
+
+def main():
+    init_logger()
+    args = _parse_cli_args()
+    if args.which == 'ls':
+        ls_command(args)
+    elif args.which == 'sync':
+        sync_command(args)
     # flickr.create_photoset('test', '4837317332')
-    cacasync = CaCaSync(dropbox, flickr)
-    cacasync.sync_flickr()
+    # cacasync = CaCaSync(dropbox, flickr)
+    # cacasync.sync_flickr()
 
 
 if __name__ == '__main__':
