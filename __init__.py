@@ -555,7 +555,7 @@ def ls_command(args):
 
 
 def sync_command(args):
-    if args.d and args.f:
+    if args.d is not None and args.f is not None:
         dropbox = init_dropbox(ConfigReader)
         flickr = init_flickr(ConfigReader)
         cacasync = CaCaSync(dropbox, flickr)
