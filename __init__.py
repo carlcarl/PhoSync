@@ -26,7 +26,7 @@ SUPPORT_MIME_LIST = [
     'image/gif',
     'image/x-ms-bmp',
 ]
-IMAGE_SIZE_LIMIT = 10485760  # bytes
+IMAGE_SIZE_LIMIT = 10485760  # bytes == 10MB
 
 
 def retry(tries=3, delay=1):
@@ -67,8 +67,8 @@ def retry(tries=3, delay=1):
 
 
 def legal_image(file_info):
-    size = int(file_info['size'].split(' ')[0])
-    return is_image(file_info['mime_type']) and legal_image_size(size)
+    logger.debug('Image size: ' + file_info['size'])
+    return is_image(file_info['mime_type']) and legal_image_size(file_info['size'])
 
 
 def is_image(mime_type):
@@ -82,8 +82,18 @@ def is_image(mime_type):
     return mime_type in SUPPORT_MIME_LIST
 
 
-def legal_image_size(size):
-    return size <= IMAGE_SIZE_LIMIT
+def legal_image_size(size_string):
+    size_array = size_string.split(' ')
+    size = float(size_array[0])
+    unit = size_array[1]
+    if unit == 'KB':
+        size *= 1024
+    elif unit == 'MB':
+        size *= 1048576
+    is_smaller = size <= IMAGE_SIZE_LIMIT
+    if not is_smaller:
+        logger.warning('Image size too large: {s}'.format(s=size))
+    return is_smaller
 
 
 class UploadError(Exception):
@@ -321,7 +331,6 @@ class Flickr(object):
         tmp_sig = self.api_secret
         for i in args:
             tmp_sig = tmp_sig + i[0] + i[1]
-        logger.debug(tmp_sig)
         api_sig = md5.new(tmp_sig.encode('utf-8')).hexdigest()
         return ('api_sig', api_sig)
 
