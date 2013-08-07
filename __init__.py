@@ -26,6 +26,7 @@ SUPPORT_MIME_LIST = [
     'image/gif',
     'image/x-ms-bmp',
 ]
+IMAGE_SIZE_LIMIT = 10485760  # bytes
 
 
 def retry(tries=3, delay=1):
@@ -65,6 +66,11 @@ def retry(tries=3, delay=1):
     return deco_retry
 
 
+def legal_image(file_info):
+    size = int(file_info['size'].split(' ')[0])
+    return is_image(file_info['mime_type']) and legal_image_size(size)
+
+
 def is_image(mime_type):
     '''
     Check a mime type is a image or not.
@@ -74,6 +80,10 @@ def is_image(mime_type):
         True if is a image, else False
     '''
     return mime_type in SUPPORT_MIME_LIST
+
+
+def legal_image_size(size):
+    return size <= IMAGE_SIZE_LIMIT
 
 
 class UploadError(Exception):
@@ -213,7 +223,7 @@ class Dropbox(object):
         file_meta = {}
         if 'contents' in resp:
             for f in resp['contents']:
-                if (not f['is_dir']) and (not is_image(f['mime_type'])):
+                if (not f['is_dir']) and (not legal_image(f)):
                     continue
                 path_tokens = f['path'].split(os.sep)
                 name = os.sep.join(path_tokens[-1:])
