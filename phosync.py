@@ -18,7 +18,7 @@ assert uniout
 from xml.dom import minidom
 
 logger = logging.getLogger(__name__)
-CONF_FILE = 'cacasync.conf'
+CONF_FILE = 'phosync.conf'
 TMP_DIR = ''
 SUPPORT_MIME_LIST = [
     'image/jpeg',
@@ -108,7 +108,7 @@ class UploadError(Exception):
         self.msg = msg
 
 
-class CaCaSync(object):
+class PhoSync(object):
 
     def __init__(self, dropbox, flickr=None, gplus=None):
         self.dropbox = dropbox
@@ -199,7 +199,7 @@ class Dropbox(object):
 
         global TMP_DIR
         TMP_DIR = (tempfile.gettempdir() + os.sep +
-                   'cacasync' + os.sep + app_token)
+                   'phosync' + os.sep + app_token)
         self._create_tmp_dir()
 
     def _create_tmp_dir(self):
@@ -394,6 +394,9 @@ class Flickr(object):
         args = [
             ('api_key', self.api_key),
             ('auth_token', self.app_token),
+            ('is_family', '0'),
+            ('is_friend', '0'),
+            ('is_public', '0'),
             ('tilte', photo_name),
         ]
         args.sort(key=lambda tup: tup[0])
@@ -577,8 +580,8 @@ def sync_command(args):
     if args.d is not None and args.f is not None:
         dropbox = init_dropbox(ConfigReader)
         flickr = init_flickr(ConfigReader)
-        cacasync = CaCaSync(dropbox, flickr)
-        cacasync.sync_flickr()
+        phosync = PhoSync(dropbox, flickr)
+        phosync.sync_flickr()
 
 
 def main():
