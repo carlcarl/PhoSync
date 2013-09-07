@@ -7,15 +7,19 @@ import shutil
 import tempfile
 import logging
 import argparse
-from ConfigParser import SafeConfigParser
-from dropbox import client
-import requests
 import md5
 import json
 import time
+import mimetypes
+from xml.dom import minidom
+from ConfigParser import SafeConfigParser
+import requests
+from dropbox import client
+import gdata.photos.service
+import gdata.media
+import gdata.geo
 import uniout
 assert uniout
-from xml.dom import minidom
 
 logger = logging.getLogger(__name__)
 CONF_FILE = 'phosync.conf'
@@ -118,7 +122,7 @@ class PhoSync(object):
     def sync_flickr(self):
         dropbox_file_names, dropbox_file_metas = self.dropbox.ls()
         flickr_photoset_titles, flickr_photoset_metas = self.flickr.get_photosets_info()
-        diff_set, base_set = self.diff_flickr(
+        diff_set, base_set = self.diff(
             dropbox_file_names,
             flickr_photoset_titles
         )
@@ -127,7 +131,7 @@ class PhoSync(object):
         for folder in base_set:
             s_dropbox_file_names, s_dropbox_file_metas = self.dropbox.ls(folder)
             s_flickr_photoset_titles, s_flickr_photoset_metas = self.flickr.get_photos_info(folder)
-            s_diff_set, s_base_set = self.diff_flickr(
+            s_diff_set, s_base_set = self.diff(
                 s_dropbox_file_names,
                 s_flickr_photoset_titles
             )
@@ -156,12 +160,12 @@ class PhoSync(object):
         for photo_id in photo_ids:
             self.flickr.add_photo_to_photoset(photoset_id, photo_id)
 
-    def diff_flickr(self, dropbox_file_set, flickr_file_set):
+    def diff(self, dropbox_file_set, target_file_set):
         '''
-        Get the different and same part of dropbox and flickr file list
+        Get the different and same part of dropbox and target file list
         Args:
             dropbox_file_set: Dropbox file sets
-            flickr_file_set: Flickr file sets
+            target_file_set: Target service file sets
         Returns:
             diff_set: Different part
             base_set: Same part
@@ -169,14 +173,46 @@ class PhoSync(object):
         # folder_queue = []
         logger.debug('=====================================')
         logger.debug('dropbox: ' + str(dropbox_file_set))
-        logger.debug('flickr: ' + str(flickr_file_set))
+        logger.debug('target: ' + str(target_file_set))
 
-        diff_set = dropbox_file_set.difference(flickr_file_set)
+        diff_set = dropbox_file_set.difference(target_file_set)
         base_set = dropbox_file_set.difference(diff_set)
         logger.debug('diff_set: ' + str(diff_set))
         logger.debug('base_set: ' + str(base_set))
         logger.debug('=====================================')
         return diff_set, base_set
+
+    def sync_gplus(self):
+        dropbox_file_names, dropbox_file_metas = self.dropbox.ls()
+        gplus_photoset_titles, gplus_photoset_metas = self.gplus.get_photosets_info()
+        diff_set, base_set = self.diff(
+            dropbox_file_names,
+            gplus_photoset_titles
+        )
+        for folder in diff_set:
+            self._sync_gplus_root(folder)
+        for folder in base_set:
+            s_dropbox_file_names, s_dropbox_file_metas = self.dropbox.ls(folder)
+            s_gplus_photoset_titles, s_gplus_photoset_metas = self.gplus.get_photos_info(folder)
+            s_diff_set, s_base_set = self.diffs(
+                s_dropbox_file_names,
+                s_gplus_photoset_titles
+            )
+            photoset_id = gplus_photoset_metas[folder]['id']
+            self._sync_gplus_leaf(folder, photoset_id, s_diff_set)
+
+    def _sync_gplus_root(self, folder):
+        file_set = self.dropbox.download_folder(folder)
+        logger.debug('dropbox download at root: ' + str(file_set))
+        photoset_id = self.gplus.create_photoset(folder)
+        for f in file_set:
+            self.gplus.upload_photo(folder, photoset_id, f)
+
+    def _sync_gplus_leaf(self, folder, photoset_id, file_set):
+        file_set = self.dropbox.download_folder(folder, file_set)
+        logger.debug('dropbox download at leaf: ' + str(file_set))
+        for f in file_set:
+            self.gplus.upload_photo(folder, photoset_id, f)
 
 
 class Dropbox(object):
@@ -467,6 +503,75 @@ class Flickr(object):
         logger.debug(resp.text)
 
 
+class GPlus(object):
+    def __init__(self, email, password):
+        self.gd_client = gdata.photos.service.PhotosService()
+        self.gd_client.email = email
+        self.username = email.split('@')[0]
+        self.gd_client.password = password
+        self.gd_client.source = 'exampleCo-exampleApp-1'
+        self.gd_client.ProgrammaticLogin()
+
+    def get_photosets_info(self):
+        albums = self.gd_client.GetUserFeed(user=self.username)
+        photoset_metas = {}
+        photoset_titles = set()
+        for album in albums.entry:
+            # print(
+            #     'title: {title}, number of photos: %s, id: %s'.format(
+            #         title=album.title.text,
+            #         album.numphotos.text,
+            #         album.gphoto_id.text
+            #     )
+            # )
+            photoset_metas[album.title.text] = {
+                'id': album.gphoto_id.text,
+            }
+            photoset_titles.add(album.title.text)
+        self.photoset_titles = photoset_titles
+        self.photoset_metas = photoset_metas
+        return photoset_titles, photoset_metas
+
+    def get_photos_info(self, photoset_name):
+        if self.photoset_metas is None:
+            self.get_photosets_info()
+        photoset_id = self.photoset_metas[photoset_name]['id']
+        photos = self.gd_client.GetFeed(
+            '/data/feed/api/user/{username}/albumid/{albumid}?kind=photo'.format(
+                username=self.username,
+                album_id=photoset_id
+            )
+        )
+        photo_metas = {}
+        photo_titles = set()
+        for photo in photos.entry:
+            photo_metas[photo.title.text] = {
+                'id': photo.gphoto_id.text,
+            }
+            photo_titles.add(photo.title.text)
+        return photo_titles, photo_metas
+
+    @retry()
+    def upload_photo(self, folder, photoset_id, photo_name):
+        file_path = TMP_DIR + os.sep + folder + os.sep + photo_name
+        mime_type = mimetypes.guess_type(file_path)[0]
+        photo = self.gd_client.InsertPhotoSimple(
+            '/data/feed/api/user/{username}/albumid/{albumid}'.format(
+                username=self.username,
+                albumid=photoset_id
+            ),
+            photo_name,
+            '',
+            file_path,
+            content_type=mime_type
+        )
+        return photo.gphoto_id.text
+
+    def create_photoset(self, photoset_name):
+        album = self.gd_client.InsertAlbum(title=photoset_name, summary='')
+        return album.gphoto_id.text
+
+
 def init_logger():
     formatter = logging.Formatter('%(levelname)s: %(message)s')
     console = logging.StreamHandler(stream=sys.stdout)
@@ -513,6 +618,13 @@ def _parse_cli_args():
         const='',
         help='Flick photoset, sync all if empty',
         metavar='<flickr photoset>'
+    )
+    sync_parser.add_argument(
+        '-g',
+        nargs='?',
+        const='',
+        help='Google+ photoset, sync all if empty',
+        metavar='<g+ photoset>'
     )
     args = parser.parse_args()
     logger.debug(args)
@@ -562,6 +674,14 @@ def init_flickr(reader_class):
     return flickr
 
 
+def init_gplus(reader_class):
+    reader = reader_class()
+    gplus_email = reader.read('gplus', 'EMAIL')
+    gplus_password = reader.read('gplus', 'PASSWORD')
+    gplus = GPlus(gplus_email, gplus_password)
+    return gplus
+
+
 def ls_command(args):
     if args.d is not None:
         dropbox = init_dropbox(ConfigReader)
@@ -577,11 +697,19 @@ def ls_command(args):
 
 
 def sync_command(args):
+    dropbox = flickr = gplus = None
     if args.d is not None and args.f is not None:
         dropbox = init_dropbox(ConfigReader)
         flickr = init_flickr(ConfigReader)
-        phosync = PhoSync(dropbox, flickr)
+        phosync = PhoSync(dropbox, flickr, gplus)
         phosync.sync_flickr()
+    elif args.d is not None and args.g is not None:
+        dropbox = init_dropbox(ConfigReader)
+        gplus = init_gplus(ConfigReader)
+        phosync = PhoSync(dropbox, flickr, gplus)
+        phosync.sync_gplus()
+    else:
+        print('No such arguments')
 
 
 def main():
