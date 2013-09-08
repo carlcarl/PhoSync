@@ -568,7 +568,7 @@ class GPlus(object):
         return photo.gphoto_id.text
 
     def create_photoset(self, photoset_name):
-        album = self.gd_client.InsertAlbum(title=photoset_name, summary='')
+        album = self.gd_client.InsertAlbum(title=photoset_name, summary='', access='private')
         return album.gphoto_id.text
 
 
