@@ -1,0 +1,13 @@
+[dropbox]
+APP_KEY = 
+APP_SECRET = 
+APP_TOKEN = 
+CURRENT_PATH = Photos
+[flickr]
+API_KEY = 
+API_SECRET = 
+APP_TOKEN = 
+APP_SECRET = 
+[gplus]
+EMAIL = 
+PASSWORD = 
