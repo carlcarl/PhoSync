@@ -3,6 +3,7 @@ APP_KEY =
 APP_SECRET = 
 APP_TOKEN = 
 CURRENT_PATH = Photos
+IGNORE_FOLDERS = []
 [flickr]
 API_KEY = 
 API_SECRET = 

@@ -119,21 +119,45 @@ class PhoSync(object):
         self.flickr = flickr
         self.gplus = gplus
 
+    def diff(self, dropbox_file_set, target_file_set, ignore_folders=None):
+        '''
+        Get the different and same part of dropbox and target file list
+        Args:
+            dropbox_file_set: Dropbox file sets
+            target_file_set: Target service file sets
+        Returns:
+            diff_set: Different part
+            base_set: Same part
+        '''
+        if ignore_folders is not None:
+            dropbox_file_set = dropbox_file_set.difference(ignore_folders)
+        logger.debug('=====================================')
+        logger.debug('dropbox: ' + str(dropbox_file_set))
+        logger.debug('target: ' + str(target_file_set))
+
+        diff_set = dropbox_file_set.difference(target_file_set)
+        base_set = dropbox_file_set.difference(diff_set)
+        logger.debug('diff_set: ' + str(diff_set))
+        logger.debug('base_set: ' + str(base_set))
+        logger.debug('=====================================')
+        return diff_set, base_set
+
     def sync_flickr(self):
         dropbox_file_names, dropbox_file_metas = self.dropbox.ls()
         flickr_photoset_titles, flickr_photoset_metas = self.flickr.get_photosets_info()
         diff_set, base_set = self.diff(
             dropbox_file_names,
-            flickr_photoset_titles
+            flickr_photoset_titles,
+            self.dropbox.ignore_folders
         )
         for folder in diff_set:
             self._sync_flickr_root(folder)
         for folder in base_set:
             s_dropbox_file_names, s_dropbox_file_metas = self.dropbox.ls(folder)
-            s_flickr_photoset_titles, s_flickr_photoset_metas = self.flickr.get_photos_info(folder)
+            s_flickr_photo_titles, s_flickr_photo_metas = self.flickr.get_photos_info(folder)
             s_diff_set, s_base_set = self.diff(
                 s_dropbox_file_names,
-                s_flickr_photoset_titles
+                s_flickr_photo_titles
             )
             photoset_id = flickr_photoset_metas[folder]['id']
             self._sync_flickr_leaf(folder, photoset_id, s_diff_set)
@@ -160,43 +184,22 @@ class PhoSync(object):
         for photo_id in photo_ids:
             self.flickr.add_photo_to_photoset(photoset_id, photo_id)
 
-    def diff(self, dropbox_file_set, target_file_set):
-        '''
-        Get the different and same part of dropbox and target file list
-        Args:
-            dropbox_file_set: Dropbox file sets
-            target_file_set: Target service file sets
-        Returns:
-            diff_set: Different part
-            base_set: Same part
-        '''
-        # folder_queue = []
-        logger.debug('=====================================')
-        logger.debug('dropbox: ' + str(dropbox_file_set))
-        logger.debug('target: ' + str(target_file_set))
-
-        diff_set = dropbox_file_set.difference(target_file_set)
-        base_set = dropbox_file_set.difference(diff_set)
-        logger.debug('diff_set: ' + str(diff_set))
-        logger.debug('base_set: ' + str(base_set))
-        logger.debug('=====================================')
-        return diff_set, base_set
-
     def sync_gplus(self):
         dropbox_file_names, dropbox_file_metas = self.dropbox.ls()
         gplus_photoset_titles, gplus_photoset_metas = self.gplus.get_photosets_info()
         diff_set, base_set = self.diff(
             dropbox_file_names,
-            gplus_photoset_titles
+            gplus_photoset_titles,
+            self.dropbox.ignore_folders
         )
         for folder in diff_set:
             self._sync_gplus_root(folder)
         for folder in base_set:
             s_dropbox_file_names, s_dropbox_file_metas = self.dropbox.ls(folder)
-            s_gplus_photoset_titles, s_gplus_photoset_metas = self.gplus.get_photos_info(folder)
-            s_diff_set, s_base_set = self.diffs(
+            s_gplus_photo_titles, s_gplus_photo_metas = self.gplus.get_photos_info(folder)
+            s_diff_set, s_base_set = self.diff(
                 s_dropbox_file_names,
-                s_gplus_photoset_titles
+                s_gplus_photo_titles
             )
             photoset_id = gplus_photoset_metas[folder]['id']
             self._sync_gplus_leaf(folder, photoset_id, s_diff_set)
@@ -217,7 +220,7 @@ class PhoSync(object):
 
 class Dropbox(object):
     def __init__(
-        self, api_key, api_secret, app_token, photo_path
+        self, api_key, api_secret, app_token, photo_path, ignore_folders
     ):
         '''
         Args:
@@ -225,11 +228,13 @@ class Dropbox(object):
             api_secret: API secret string
             app_token: User auth token
             photo_path: Photo path of Dropbox
+            ignore_folders: Ignore these Folders when sync
         '''
         self.api_token = api_key
         self.api_secret = api_secret
         self.app_token = app_token
         self.photo_path = photo_path
+        self.ignore_folders = ignore_folders
 
         self.api_client = client.DropboxClient(app_token)
 
@@ -648,11 +653,14 @@ def init_dropbox(reader_class):
     dropbox_app_token = reader.read('dropbox', 'APP_TOKEN')
     dropbox_photo_path = reader.read('dropbox', 'CURRENT_PATH')
 
+    dropbox_ignore_folders = set(json.loads(reader.read('dropbox', 'IGNORE_FOLDERS')))
+
     dropbox = Dropbox(
         dropbox_api_key,
         dropbox_api_secret,
         dropbox_app_token,
-        dropbox_photo_path
+        dropbox_photo_path,
+        dropbox_ignore_folders
     )
     return dropbox
 
