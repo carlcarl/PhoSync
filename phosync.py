@@ -727,9 +727,6 @@ def main():
         ls_command(args)
     elif args.which == 'sync':
         sync_command(args)
-    # flickr.create_photoset('test', '4837317332')
-    # cacasync = CaCaSync(dropbox, flickr)
-    # cacasync.sync_flickr()
 
 
 if __name__ == '__main__':
