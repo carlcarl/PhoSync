@@ -1,4 +1,8 @@
+# -*- coding: utf-8 -*-
+
 import unittest
+import uniout
+assert uniout
 
 PASS = 1
 FAIL = 0
@@ -64,6 +68,68 @@ def test_legal_image():
         for j in size_list[i[0]]:
             for k in mime_list[i[1]]:
                 yield check_legal_image, i, j, k
+
+
+def test_phosync_diff():
+    from phosync import PhoSync
+    phosync = PhoSync(None)
+    dropbox_file_set = set()
+    target_file_set = set()
+
+    assert phosync.diff(
+        dropbox_file_set,
+        target_file_set,
+        None
+    ) == (set(), set())
+
+    dropbox_file_set.add('a')
+    assert phosync.diff(
+        dropbox_file_set,
+        target_file_set,
+        None
+    ) == (set('a'), set())
+
+    dropbox_file_set.add('b')
+    assert phosync.diff(
+        dropbox_file_set,
+        target_file_set,
+        None
+    ) == (set('ab'), set())
+
+    target_file_set.add('b')
+    assert phosync.diff(
+        dropbox_file_set,
+        target_file_set,
+        None
+    ) == (set('a'), set('b'))
+
+    assert phosync.diff(
+        dropbox_file_set,
+        target_file_set,
+        set('a')
+    ) == (set(), set('b'))
+
+    dropbox_file_set.add('評價')
+
+    assert phosync.diff(
+        dropbox_file_set,
+        target_file_set,
+        set('a')
+    ) == (set(['評價']), set('b'))
+
+    target_file_set.add('專案')
+    assert phosync.diff(
+        dropbox_file_set,
+        target_file_set,
+        set('a')
+    ) == (set(['評價']), set('b'))
+
+    dropbox_file_set.add('專案')
+    assert phosync.diff(
+        dropbox_file_set,
+        target_file_set,
+        set('a')
+    ) == (set(['評價']), set(['b', '專案']))
 
 # class PhoSyncTests(unittest.TestCase):
 #
