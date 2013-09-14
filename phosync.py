@@ -118,6 +118,7 @@ class PhoSync(object):
         self.dropbox = dropbox
         self.flickr = flickr
         self.gplus = gplus
+        self.target = None
 
     def diff(self, dropbox_file_set, target_file_set, ignore_folders=None):
         '''
@@ -142,80 +143,43 @@ class PhoSync(object):
         logger.debug('=====================================')
         return diff_set, base_set
 
-    def sync_flickr(self):
+    def sync(self):
+        if self.flickr is not None:
+            self.target = self.flickr
+            self._sync()
+        if self.gplus is not None:
+            self.target = self.gplus
+            self._sync()
+
+    def _sync(self):
         dropbox_file_names, dropbox_file_metas = self.dropbox.ls()
-        flickr_photoset_titles, flickr_photoset_metas = self.flickr.get_photosets_info()
+        target_album_names, target_album_metas = self.target.get_albums_info()
         diff_set, base_set = self.diff(
             dropbox_file_names,
-            flickr_photoset_titles,
+            target_album_names,
             self.dropbox.ignore_folders
         )
         for folder in diff_set:
-            self._sync_flickr_root(folder)
+            self._sync_omitted_albums(folder)
         for folder in base_set:
             s_dropbox_file_names, s_dropbox_file_metas = self.dropbox.ls(folder)
-            s_flickr_photo_titles, s_flickr_photo_metas = self.flickr.get_photos_info(folder)
+            s_target_photo_titles, s_target_photo_metas = self.target.get_photos_info(folder)
             s_diff_set, s_base_set = self.diff(
                 s_dropbox_file_names,
-                s_flickr_photo_titles
+                s_target_photo_titles
             )
-            photoset_id = flickr_photoset_metas[folder]['id']
-            self._sync_flickr_leaf(folder, photoset_id, s_diff_set)
+            album_id = target_album_metas[folder]['id']
+            self._sync_omitted_photos_in_album(folder, s_diff_set, album_id)
 
-    def _sync_flickr_root(self, folder):
-        file_set = self.dropbox.download_folder(folder)
-        logger.debug('dropbox download at root: ' + str(file_set))
-        flickr_photo_ids = []
-        for f in file_set:
-            photo_id = self.flickr.upload_photo(folder, f)
-            flickr_photo_ids.append(photo_id)
-        if flickr_photo_ids:  # Not a empty folder
-            photoset_id = self.flickr.create_photoset(folder, flickr_photo_ids[0])
-            for photo_id in flickr_photo_ids[1:]:
-                self.flickr.add_photo_to_photoset(photoset_id, photo_id)
+    def _sync_omitted_albums(self, folder):
+        downloaded_file_set = self.dropbox.download_folder(folder)
+        logger.debug('dropbox download at root: ' + str(downloaded_file_set))
+        self.target.upload_album(folder, downloaded_file_set)
 
-    def _sync_flickr_leaf(self, folder, photoset_id, file_set):
-        file_set = self.dropbox.download_folder(folder, file_set)
-        logger.debug('dropbox download at leaf: ' + str(file_set))
-        photo_ids = []
-        for f in file_set:
-            photo_id = self.flickr.upload_photo(folder, f)
-            photo_ids.append(photo_id)
-        for photo_id in photo_ids:
-            self.flickr.add_photo_to_photoset(photoset_id, photo_id)
-
-    def sync_gplus(self):
-        dropbox_file_names, dropbox_file_metas = self.dropbox.ls()
-        gplus_photoset_titles, gplus_photoset_metas = self.gplus.get_photosets_info()
-        diff_set, base_set = self.diff(
-            dropbox_file_names,
-            gplus_photoset_titles,
-            self.dropbox.ignore_folders
-        )
-        for folder in diff_set:
-            self._sync_gplus_root(folder)
-        for folder in base_set:
-            s_dropbox_file_names, s_dropbox_file_metas = self.dropbox.ls(folder)
-            s_gplus_photo_titles, s_gplus_photo_metas = self.gplus.get_photos_info(folder)
-            s_diff_set, s_base_set = self.diff(
-                s_dropbox_file_names,
-                s_gplus_photo_titles
-            )
-            photoset_id = gplus_photoset_metas[folder]['id']
-            self._sync_gplus_leaf(folder, photoset_id, s_diff_set)
-
-    def _sync_gplus_root(self, folder):
-        file_set = self.dropbox.download_folder(folder)
-        logger.debug('dropbox download at root: ' + str(file_set))
-        photoset_id = self.gplus.create_photoset(folder)
-        for f in file_set:
-            self.gplus.upload_photo(folder, photoset_id, f)
-
-    def _sync_gplus_leaf(self, folder, photoset_id, file_set):
-        file_set = self.dropbox.download_folder(folder, file_set)
-        logger.debug('dropbox download at leaf: ' + str(file_set))
-        for f in file_set:
-            self.gplus.upload_photo(folder, photoset_id, f)
+    def _sync_omitted_photos_in_album(self, folder, file_set, album_id):
+        downloaded_file_set = self.dropbox.download_folder(folder, file_set)
+        logger.debug('dropbox download at leaf: ' + str(downloaded_file_set))
+        self.target.upload_album(self, folder, downloaded_file_set, album_id)
 
 
 class Dropbox(object):
@@ -251,6 +215,8 @@ class Dropbox(object):
             if not os.path.isdir(TMP_DIR):
                 logger.error('{path} is not a directory'.format(path=TMP_DIR))
                 sys.exit(1)
+            else:  # ignore
+                pass
         else:
             os.makedirs(TMP_DIR)
 
@@ -332,8 +298,8 @@ class Flickr(object):
         self.rest_url = 'http://flickr.com/services/rest/'
         self.upload_url = 'http://up.flickr.com/services/upload/'
 
-        self.photoset_metas = None
-        self.photoset_titles = None
+        self.album_metas = None
+        self.album_names = None
 
     def _get_request_args(self, method, **kwargs):
         '''
@@ -375,12 +341,12 @@ class Flickr(object):
         api_sig = md5.new(tmp_sig.encode('utf-8')).hexdigest()
         return ('api_sig', api_sig)
 
-    def get_photosets_info(self):
+    def get_albums_info(self):
         '''
         Get flickr photosets information
         Returns:
-            tltles: Photoset name list
-            photoset_metas: A dict for photoset name to it's other information,
+            album_names: Photoset name list
+            album_metas: A dict for photoset name to it's other information,
                 ex: {'photoset_name': {'id':'aaaaaa'}}
         '''
         args = self._get_request_args(
@@ -389,20 +355,20 @@ class Flickr(object):
         resp = requests.post(self.rest_url, data=args)
         logger.debug('Flickr photoset resp: ' + resp.text)
         resp_json = json.loads(resp.text.encode('utf-8'))
-        photosets = resp_json['photosets']['photoset']
-        photoset_metas = {}
-        photoset_titles = set()
-        for photoset in photosets:
-            title = photoset['title']['_content']
-            photoset_metas[title] = {
-                'id': photoset['id'],
+        albums = resp_json['photosets']['photoset']
+        album_metas = {}
+        album_names = set()
+        for album in albums:
+            name = album['title']['_content']
+            album_metas[name] = {
+                'id': album['id'],
             }
-            photoset_titles.add(title)
-        self.photoset_titles = photoset_titles
-        self.photoset_metas = photoset_metas
-        return photoset_titles, photoset_metas
+            album_names.add(name)
+        self.album_names = album_names
+        self.album_metas = album_metas
+        return album_names, album_metas
 
-    def get_photos_info(self, photoset_name):
+    def get_photos_info(self, album_name):
         '''
         Get flickr photos information in the photoset
         Returns:
@@ -410,25 +376,25 @@ class Flickr(object):
             photo_metas: A dict for photo name to it's other information,
                 ex: {'photo_name': {'id':'aaaaaa'}}
         '''
-        if self.photoset_metas is None:
-            self.get_photosets_info()
-        photoset_id = self.photoset_metas[photoset_name]['id']
+        if self.album_metas is None:
+            self.get_albums_info()
+        album_id = self.album_metas[album_name]['id']
         args = self._get_request_args(
             method='flickr.photosets.getPhotos',
-            photoset_id=photoset_id
+            photoset_id=album_id
         )
         resp = requests.post(self.rest_url, data=args)
         logger.debug('Flickr photo resp: ' + resp.text)
         resp_json = json.loads(resp.text.encode('utf-8'))
         photos = resp_json['photoset']['photo']
         photo_metas = {}
-        photo_titles = set()
+        photo_names = set()
         for photo in photos:
             photo_metas[photo['title']] = {
                 'id': photo['id'],
             }
-            photo_titles.add(photo['title'])
-        return photo_titles, photo_metas
+            photo_names.add(photo['title'])
+        return photo_names, photo_metas
 
     @retry()
     def upload_photo(self, folder, photo_name):
@@ -472,40 +438,51 @@ class Flickr(object):
                 err_msg
             )
 
-    def create_photoset(self, photoset_name, primary_photo_id):
+    def create_album(self, album_name, primary_photo_id):
         '''
         Create a photoset with a primary photo(cover)
         Args:
-            photoset_name: The photoset name
+            album_name: The photoset name
             primary_photo_id: The id of the photo
         Returns:
-            photoset_id: The id of the photoset created
+            album_id: The id of the photoset created
         '''
         args = self._get_request_args(
             method='flickr.photosets.create',
-            title=photoset_name,
+            title=album_name,
             primary_photo_id=primary_photo_id
         )
         resp = requests.post(self.rest_url, data=args)
         logger.debug('Flickr create photoset resp: ' + resp.text)
         resp_json = json.loads(resp.text)
-        photoset_id = resp_json['photoset']['id']
-        return photoset_id
+        album_id = resp_json['photoset']['id']
+        return album_id
 
-    def add_photo_to_photoset(self, photoset_id, photo_id):
+    def add_photo_to_album(self, album_id, photo_id):
         '''
         Add the photo to the photoset
         Args:
-            photoset_id: The id of the photoset
+            album_id: The id of the photoset
             photo_id: The id of the photo
         '''
         args = self._get_request_args(
             method='flickr.photosets.addPhoto',
-            photoset_id=photoset_id,
+            photoset_id=album_id,
             photo_id=photo_id
         )
         resp = requests.post(self.rest_url, data=args)
         logger.debug(resp.text)
+
+    def upload_album(self, folder, file_set, album_id=None):
+        photo_ids = []
+        for f in file_set:
+            photo_id = self.upload_photo(folder, f)
+            photo_ids.append(photo_id)
+        if photo_ids:  # Not a empty folder
+            if album_id is None:
+                album_id = self.create_album(folder, photo_ids[0])
+            for photo_id in photo_ids[1:]:
+                self.add_photo_to_album(album_id, photo_id)
 
 
 class GPlus(object):
@@ -517,34 +494,27 @@ class GPlus(object):
         self.gd_client.source = 'exampleCo-exampleApp-1'
         self.gd_client.ProgrammaticLogin()
 
-    def get_photosets_info(self):
+    def get_albums_info(self):
         albums = self.gd_client.GetUserFeed(user=self.username)
-        photoset_metas = {}
-        photoset_titles = set()
+        album_metas = {}
+        album_names = set()
         for album in albums.entry:
-            # print(
-            #     'title: {title}, number of photos: %s, id: %s'.format(
-            #         title=album.title.text,
-            #         album.numphotos.text,
-            #         album.gphoto_id.text
-            #     )
-            # )
-            photoset_metas[album.title.text] = {
+            album_metas[album.title.text] = {
                 'id': album.gphoto_id.text,
             }
-            photoset_titles.add(album.title.text)
-        self.photoset_titles = photoset_titles
-        self.photoset_metas = photoset_metas
-        return photoset_titles, photoset_metas
+            album_names.add(album.title.text)
+        self.album_names = album_names
+        self.album_metas = album_metas
+        return album_names, album_metas
 
-    def get_photos_info(self, photoset_name):
-        if self.photoset_metas is None:
-            self.get_photosets_info()
-        photoset_id = self.photoset_metas[photoset_name]['id']
+    def get_photos_info(self, album_name):
+        if self.album_metas is None:
+            self.get_albums_info()
+        album_id = self.album_metas[album_name]['id']
         photos = self.gd_client.GetFeed(
             '/data/feed/api/user/{username}/albumid/{albumid}?kind=photo'.format(
                 username=self.username,
-                album_id=photoset_id
+                album_id=album_id
             )
         )
         photo_metas = {}
@@ -557,13 +527,13 @@ class GPlus(object):
         return photo_titles, photo_metas
 
     @retry()
-    def upload_photo(self, folder, photoset_id, photo_name):
+    def upload_photo(self, folder, album_id, photo_name):
         file_path = TMP_DIR + os.sep + folder + os.sep + photo_name
         mime_type = mimetypes.guess_type(file_path)[0]
         photo = self.gd_client.InsertPhotoSimple(
             '/data/feed/api/user/{username}/albumid/{albumid}'.format(
                 username=self.username,
-                albumid=photoset_id
+                albumid=album_id
             ),
             photo_name,
             '',
@@ -572,9 +542,15 @@ class GPlus(object):
         )
         return photo.gphoto_id.text
 
-    def create_photoset(self, photoset_name):
-        album = self.gd_client.InsertAlbum(title=photoset_name, summary='', access='private')
+    def create_album(self, album_name):
+        album = self.gd_client.InsertAlbum(title=album_name, summary='', access='private')
         return album.gphoto_id.text
+
+    def upload_album(self, folder, file_set, album_id=None):
+        if album_id is None:
+            album_id = self.gplus.create_album(folder)
+        for f in file_set:
+            self.gplus.upload_photo(folder, album_id, f)
 
 
 def init_logger():
@@ -584,56 +560,6 @@ def init_logger():
     console.setFormatter(formatter)
     logger.addHandler(console)
     logger.setLevel(logging.DEBUG)
-
-
-def _parse_cli_args():
-    parser = argparse.ArgumentParser()
-    subparser = parser.add_subparsers()
-    ls_parser = subparser.add_parser('ls')
-    ls_parser.set_defaults(which='ls')
-    ls_parser.add_argument(
-        '-d',
-        nargs='?',
-        default=None,
-        const='',
-        help='List files in Dropbox under path',
-        metavar='<dropbox_path>'
-    )
-    ls_parser.add_argument(
-        '-f',
-        nargs='?',
-        default=None,
-        const='',
-        help='List files in Flickr photoset, list all photosets if empty',
-        metavar='<flickr photoset>'
-    )
-    sync_parser = subparser.add_parser('sync')
-    sync_parser.set_defaults(which='sync')
-    sync_parser.add_argument(
-        '-d',
-        nargs='?',
-        default=None,
-        const='',
-        help='Sync Dropbox under the path',
-        metavar='<dropbox_path>'
-    )
-    sync_parser.add_argument(
-        '-f',
-        nargs='?',
-        const='',
-        help='Flick photoset, sync all if empty',
-        metavar='<flickr photoset>'
-    )
-    sync_parser.add_argument(
-        '-g',
-        nargs='?',
-        const='',
-        help='Google+ photoset, sync all if empty',
-        metavar='<g+ photoset>'
-    )
-    args = parser.parse_args()
-    logger.debug(args)
-    return args
 
 
 class ConfigReader(object):
@@ -690,6 +616,64 @@ def init_gplus(reader_class):
     return gplus
 
 
+def _parse_cli_args():
+    parser = argparse.ArgumentParser()
+    subparser = parser.add_subparsers()
+    ls_parser = subparser.add_parser('ls')
+    ls_parser.set_defaults(which='ls')
+    ls_parser.add_argument(
+        '-d',
+        nargs='?',
+        default=None,
+        const='',
+        help='List files in Dropbox under path',
+        metavar='<dropbox_path>'
+    )
+    ls_parser.add_argument(
+        '-f',
+        nargs='?',
+        default=None,
+        const='',
+        help='List files in Flickr photoset, list all photosets if empty',
+        metavar='<flickr photoset>'
+    )
+    ls_parser.add_argument(
+        '-g',
+        nargs='?',
+        default=None,
+        const='',
+        help='List files in gplus album, list all albums if empty',
+        metavar='<gplus album>'
+    )
+    sync_parser = subparser.add_parser('sync')
+    sync_parser.set_defaults(which='sync')
+    sync_parser.add_argument(
+        '-d',
+        nargs='?',
+        default=None,
+        const='',
+        help='Sync Dropbox under the path',
+        metavar='<dropbox_path>'
+    )
+    sync_parser.add_argument(
+        '-f',
+        nargs='?',
+        const='',
+        help='Flick photoset, sync all if empty',
+        metavar='<flickr photoset>'
+    )
+    sync_parser.add_argument(
+        '-g',
+        nargs='?',
+        const='',
+        help='Google+ album, sync all if empty',
+        metavar='<g+ album>'
+    )
+    args = parser.parse_args()
+    logger.debug(args)
+    return args
+
+
 def ls_command(args):
     if args.d is not None:
         dropbox = init_dropbox(ConfigReader)
@@ -698,9 +682,16 @@ def ls_command(args):
     if args.f is not None:
         flickr = init_flickr(ConfigReader)
         if args.f == '':
-            result, _ = flickr.get_photosets_info()
+            result, _ = flickr.get_albums_info()
         else:
             result, _ = flickr.get_photos_info(args.f)
+        print(result)
+    if args.g is not None:
+        gplus = init_gplus(ConfigReader)
+        if args.g == '':
+            result, _ = gplus.get_albums_info()
+        else:
+            result, _ = gplus.get_albums_info(args.g)
         print(result)
 
 
