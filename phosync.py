@@ -34,9 +34,8 @@ def retry(tries=3, delay=1):
     Retry decorator, used for network requests like upload or download
     '''
     def deco_retry(f):
-        def retry(*args, **kwargs):
-            _tries, _delay = tries, delay
-            while _tries > 1:
+        def _retry(*args, **kwargs):
+            for attempt in range(tries):
                 try:
                     result = f(*args, **kwargs)
                 except UploadError as e:
@@ -46,23 +45,13 @@ def retry(tries=3, delay=1):
                             msg=e.msg
                         )
                     )
-                    time.sleep(_delay)
-                    _tries -= 1
+                    time.sleep(delay)
                 else:
                     return result
-            try:
-                result = f(*args, **kwargs)
-            except UploadError as e:
-                logger.critical(
-                    '[{f}] {msg}, program exit'.format(
-                        f=f.__name__,
-                        msg=e.msg
-                    )
-                )
-                sys.exit(1)
             else:
-                return result
-        return retry
+                sys.exit(1)
+
+        return _retry
     return deco_retry
 
 
